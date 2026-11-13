@@ -342,6 +342,31 @@ def status():
     print("Учтите: системный Linux egress пока не заблокирован.")
 
 
+
+def probe_exit():
+    """Probe through the actual VLESS/REALITY chain, not 3X-UI's broken IPv6 TCP dialer."""
+    if not STATE_FILE.is_file():
+        raise EntryError("ENTRY ещё не настроен: нет состояния каскада")
+    state = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+    if state.get("role") != "entry" or state.get("status") not in ("configured", "installed"):
+        raise EntryError("ENTRY не работает в режиме установленного каскада")
+    panel = Panel()
+    cfg = panel.get_template()
+    assert_cascade_template(cfg)
+    result = panel.test_outbound(cfg["outbounds"][0])
+    print("Проверка HTTP-запросом через VLESS/REALITY → EXIT: УСПЕШНО")
+    if isinstance(result.get("delay"), (int, float)):
+        print("Задержка:", result["delay"], "мс")
+    egress = result.get("egress")
+    if isinstance(egress, dict):
+        if egress.get("ipv4"):
+            print("Публичный IPv4 выхода:", egress["ipv4"])
+        if egress.get("country"):
+            print("Страна выхода:", egress["country"])
+    print("Примечание: TCP-кнопка 3X-UI v3.9.0 некорректно обрабатывает IPv6.")
+    return result
+
+
 def restore():
     """Fail-closed: stop and disable panel, then update its *offline* SQLite DB.
 
@@ -402,6 +427,7 @@ def main(argv=None):
     p.add_argument("--link-file", default=str(PEER_FILE))
     sub.add_parser("finish")
     sub.add_parser("status")
+    sub.add_parser("probe")
     sub.add_parser("restore")
     a = parser.parse_args(argv)
     try:
@@ -413,6 +439,8 @@ def main(argv=None):
             mark_complete()
         elif a.command == "status":
             status()
+        elif a.command == "probe":
+            probe_exit()
         elif a.command == "restore":
             restore()
     except (EntryError, hops.ChainError, OSError, KeyError, TypeError, ValueError) as exc:
