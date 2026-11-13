@@ -761,6 +761,36 @@ main() {
   done
   SNI2=${SNI2:-$SNI}; SNI3=${SNI3:-www.cloudflare.com}
 
+  # Cascade ENTRY: optional independent target choice for each applicable
+  # masking protocol. Primary REALITY/REALITY-2 use SNI; XHTTP uses SNI2;
+  # Telegram FakeTLS uses SNI3. TLS WS/Trojan use the local certificate.
+  if [[ -n ${KIT_CASCADE_NEXT_LINK_FILE:-} && $yes == no && -t 1 ]]; then
+    local mask_choice mask_value
+    for mask_choice in xhttp mtproto; do
+      [[ " ${PROTOS[*]} " == *" $mask_choice "* ]] || continue
+      if [[ $mask_choice == xhttp ]]; then
+        ask_tty "SNI для XHTTP [${SNI2}] (Enter — оставить): " \
+          || die "Нет терминала для выбора маскировки XHTTP"
+      else
+        ask_tty "FakeTLS-сайт MTProto [${SNI3}] (Enter — оставить): " \
+          || die "Нет терминала для выбора маскировки MTProto"
+      fi
+      mask_value=${REPLY,,}; mask_value=${mask_value%.}
+      [[ -n $mask_value ]] || continue
+      [[ $mask_value =~ $re_host ]] && sni_ok "$mask_value" \
+        || die "Сайт $mask_value не прошёл проверку имени / TLS 1.3 + h2"
+      if [[ $mask_choice == xhttp ]]; then
+        [[ $mask_value != "$SNI" && $mask_value != "$SNI3" ]] \
+          || die "Для XHTTP нужен отдельный SNI, не совпадающий с REALITY/MTProto"
+        SNI2=$mask_value
+      else
+        [[ $mask_value != "$SNI" && $mask_value != "$SNI2" ]] \
+          || die "Для MTProto нужен отдельный SNI, не совпадающий с REALITY/XHTTP"
+        SNI3=$mask_value
+      fi
+    done
+  fi
+
   step "Пакеты"
   export DEBIAN_FRONTEND=noninteractive
   wait_apt_idle
@@ -1284,7 +1314,7 @@ proto_xhttp() {
   local keys stream settings
   keys=$(api GET server/getNewX25519Cert)
   settings=$(jq -nc --arg id "$(uuid)" --argjson c "$(client_base xhttp)" '{clients: [$c + {id: $id, flow: ""}], decryption: "none"}')
-  stream=$(jq -nc --arg sni "$SNI" --argjson k "$keys" --arg sid "$(openssl rand -hex 8)" --arg path "/$(rand_str 10 | tr 'A-Z' 'a-z')" '{
+  stream=$(jq -nc --arg sni "$SNI2" --argjson k "$keys" --arg sid "$(openssl rand -hex 8)" --arg path "/$(rand_str 10 | tr 'A-Z' 'a-z')" '{
     network: "xhttp", security: "reality", xhttpSettings: {path: $path, mode: "auto"},
     realitySettings: {target: ($sni + ":443"), serverNames: [$sni], privateKey: $k.privateKey, shortIds: [$sid],
       settings: {publicKey: $k.publicKey, fingerprint: "chrome", spiderX: "/"}}}')
@@ -1435,7 +1465,7 @@ proto_mtproto() {
     settings=$(jq -nc --arg d "$SNI3" --argjson c "$(client_base mtproto)" --argjson casc "$cascade_mtg" '{fakeTlsDomain: $d, proxyProtocolListener: true, clients: [$c + {secret: ""}]} + $casc')
     add_inbound "MTProto" "${INNER[mtproto]}" inner mtproto "$settings" '{}'
   else
-    settings=$(jq -nc --argjson c "$(client_base mtproto)" --argjson casc "$cascade_mtg" '{fakeTlsDomain: "www.cloudflare.com", clients: [$c + {secret: ""}]} + $casc')
+    settings=$(jq -nc --arg d "$SNI3" --argjson c "$(client_base mtproto)" --argjson casc "$cascade_mtg" '{fakeTlsDomain: $d, clients: [$c + {secret: ""}]} + $casc')
     add_inbound "MTProto" "${PORTS[mtproto]}" tcp mtproto "$settings" '{}'
   fi
 }
