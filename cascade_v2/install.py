@@ -77,21 +77,37 @@ def require_environment():
         raise InstallError("Нужны systemd и iproute2; проверьте базовую Ubuntu")
 
 
+def parse_confirmation(answer, default=False):
+    """Normalize common keyboard layouts, invisible paste chars and words."""
+    import unicodedata
+    answer = unicodedata.normalize("NFKC", answer).casefold()
+    answer = "".join(ch for ch in answer if unicodedata.category(ch) != "Cf")
+    answer = answer.strip()
+    if not answer:
+        return default
+    if answer in {"y", "yes", "да", "д", "у", "y (да)"}:
+        return True
+    if answer in {"n", "no", "нет", "н", "n (нет)"}:
+        return False
+    return None
+
+
 def confirm(text, default=False):
-    """Consistent yes/no questions. Empty input means the safer default (No)."""
-    suffix = "[Y/n]" if default else "[y/N]"
+    """Repeat until an explicit answer; Enter is safe No by default."""
+    suffix = "[y/N]" if not default else "[Y/n]"
     while True:
         try:
-            answer = input(f"\n{text} {suffix}: ").strip().lower()
+            raw = input(f"\n{text} {suffix}: ")
         except EOFError as exc:
             raise InstallError("Терминал отключился во время подтверждения") from exc
-        if answer == "":
-            return default
-        if answer == "y":
-            return True
-        if answer == "n":
-            return False
-        print("Введите y (да) или n (нет). Enter — нет.")
+        answer = parse_confirmation(raw, default=default)
+        if answer is not None:
+            return answer
+        # It's a plain confirmation, not a secret field; Unicode codepoints
+        # make Cyrillic/Latin confusables and pasted control chars debuggable.
+        codepoints = " ".join(f"U+{ord(ch):04X}" for ch in raw[:40])
+        print("Ответ не распознан. Используйте y/yes/да или n/no/нет.")
+        print("Коды введённых символов:", codepoints or "(пусто)")
 
 
 def prompt_vless_link(target):
