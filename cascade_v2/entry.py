@@ -249,6 +249,35 @@ def merge_template(original, peer):
     return cfg
 
 
+def assert_cascade_template(cfg):
+    """Fail if another Xray routing rule could bypass EXIT before catch-all."""
+    if not isinstance(cfg, dict):
+        raise EntryError("Не объект Xray template")
+    obs = cfg.get("outbounds")
+    if (not isinstance(obs, list) or not obs or
+            obs[0].get("tag") != OUTBOUND_TAG or
+            obs[0].get("protocol") != "vless"):
+        raise EntryError("Первый outbound не является VLESS каскадом")
+    routing = cfg.get("routing")
+    rules = routing.get("rules") if isinstance(routing, dict) else None
+    if not isinstance(rules, list):
+        raise EntryError("Нет правил маршрутизации Xray")
+    index = 0
+    while index < len(rules) and is_api_rule(rules[index]):
+        index += 1
+    expected = {
+        "type": "field", "network": "tcp,udp", "outboundTag": OUTBOUND_TAG
+    }
+    if index >= len(rules) or rules[index] != expected:
+        raise EntryError(
+            "После служебного API нет обязательного правила TCP/UDP -> EXIT"
+        )
+    if any(is_api_rule(rule) for rule in rules[index + 1:]):
+        raise EntryError("API-правила расположены после каскадного маршрута")
+
+
+
+
 def apply(link_file):
     if os.geteuid() != 0:
         raise EntryError("Нужен root")
@@ -264,12 +293,7 @@ def apply(link_file):
         panel.test_outbound(changed["outbounds"][0])
         panel.put_template(changed)
         confirmed = panel.get_template()
-        if confirmed["outbounds"][0].get("tag") != OUTBOUND_TAG:
-            raise EntryError("Панель не сохранила каскадный outbound")
-        if confirmed["routing"]["rules"][
-                len([x for x in confirmed["routing"]["rules"] if is_api_rule(x)])
-            ].get("outboundTag") != OUTBOUND_TAG:
-            raise EntryError("Панель не сохранила обязательное правило маршрутизации")
+        assert_cascade_template(confirmed)
     except Exception:
         # Do NOT restore direct as clients may already exist on reruns.
         raise
@@ -286,6 +310,10 @@ def mark_complete():
     if not STATE_FILE.is_file():
         raise EntryError("Конфигурация ENTRY ещё не создана")
     state = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+    panel = Panel()
+    template = panel.get_template()
+    assert_cascade_template(template)
+    panel.test_outbound(template["outbounds"][0])
     state["status"] = "installed"
     secure_write(STATE_FILE, hops.format_plan(state))
 
@@ -302,8 +330,7 @@ def status():
     panel = Panel()
     cfg = panel.get_template()
     print("Маршрут Xray:", cfg["outbounds"][0].get("tag"))
-    if cfg["outbounds"][0].get("tag") != OUTBOUND_TAG:
-        raise EntryError("CASCADE НАРУШЕН: первый outbound изменён")
+    assert_cascade_template(cfg)
     print("Учтите: системный Linux egress пока не заблокирован.")
 
 
