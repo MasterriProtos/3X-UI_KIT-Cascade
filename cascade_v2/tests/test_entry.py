@@ -416,6 +416,36 @@ class EntryTests(unittest.TestCase):
                     entry.probe_mtproto()
                 panel.assert_not_called()
 
+    def test_cascade_mtproto_has_separate_public_port(self):
+        installer = (Path(__file__).resolve().parents[2] / "scripts" / "3x-ui.sh").read_text()
+        kit = (Path(__file__).resolve().parents[2] / "scripts" / "kit.sh").read_text()
+        helper = (Path(__file__).resolve().parents[2] / "scripts" / "mtproto-public-cascade.sh").read_text()
+        self.assertIn("# KIT CASCADE MTProto direct 8445", installer)
+        self.assertIn("KIT_CASCADE_NEXT_LINK_FILE", installer)
+        self.assertIn('proxy_pass 127.0.0.1:${INNER[mtproto]}', installer)
+        self.assertIn("mt_public_port()", kit)
+        self.assertIn("mt_port=$(mt_public_port)", kit)
+        self.assertIn("out=$(sed -E", kit)
+        self.assertIn("port: $p", kit)
+        self.assertIn("proxy_protocol on;", helper)
+        self.assertIn("trap 'rollback' ERR", helper)
+        self.assertIn("127.0.0.1:10445;", helper)
+        import subprocess
+        for script in ("3x-ui.sh", "kit.sh", "mtproto-public-cascade.sh"):
+            subprocess.run(
+                ["bash", "-n", str(Path(__file__).resolve().parents[2] / "scripts" / script)],
+                check=True,
+            )
+        # Telegram's query port is remapped; VLESS URLs must remain unchanged.
+        command = r'sed -E "/^tg:\/\/proxy\?/s/([?&]port=)[0-9]+/\\18445/"'
+        sample = "tg://proxy?server=example.com&port=443&secret=eeabcd\\nvless://uuid@example.com:443?security=reality\\n"
+        result = subprocess.run(
+            ["bash", "-c", command], input=sample, text=True,
+            capture_output=True, check=True,
+        ).stdout
+        self.assertIn("tg://proxy?server=example.com&port=8445", result)
+        self.assertIn("vless://uuid@example.com:443", result)
+
     def test_duplicate_sni_prompts_again_instead_of_exiting(self):
         script = (Path(__file__).resolve().parents[2] / "scripts" / "3x-ui.sh"
                   ).read_text(encoding="utf-8")
