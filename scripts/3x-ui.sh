@@ -42,6 +42,10 @@ XUI_INSTALL_SHA256="18616fe26c8f6c92db6daa2dcd7cd53c5143ee69ecfd26d8ea6dc9b2c786
 KIT_VERSION="1.2.1"
 # kit и kit-sub берём из того же релиза, что и этот скрипт, а не из меняющейся ветки main.
 KIT_RAW="https://raw.githubusercontent.com/itsnotkubrick/3X-UI_KIT/v$KIT_VERSION"
+# Cascade: KIT CLI and subscription scripts come from this fork.
+if [[ -n ${KIT_CASCADE_NEXT_LINK_FILE:-} ]]; then
+  KIT_RAW="https://raw.githubusercontent.com/MasterriProtos/3X-UI_KIT-Cascade/multi-hop-v2"
+fi
 # Ядро Xray для панели. С 26.7.x клиенты на Mihomo и sing-box (Hiddify, FlClash,
 # Clash Verge, Mihomo в XKeen) не проходят REALITY – проверено 2026-09-25.
 # 26.6.27 – последняя версия, с которой работают все клиенты и которую принимает 3X-UI.
@@ -833,6 +837,16 @@ main() {
   say "${D}На новых версиях клиенты на sing-box (Karing, Hiddify) перестают подключаться${N}"
   say "${D}по REALITY и ещё нескольким протоколам. Перейдём на новое, когда это исправят.${N}"
 
+  # Configure tested next-hop route BEFORE creating any client protocol.
+  if [[ -n ${KIT_CASCADE_NEXT_LINK_FILE:-} ]]; then
+    local cascade_path
+    cascade_path="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)/cascade_v2/entry.py"
+    [[ -f $cascade_path ]] || die "Нет cascade_v2/entry.py – нужен полный checkout multi-hop-v2"
+    python3 "$cascade_path" apply --link-file "$KIT_CASCADE_NEXT_LINK_FILE" \
+      || die "CASCADE: VLESS outbound/маршрут не применён; клиентские протоколы НЕ созданы."
+    ok "Маршрутизация через EXIT включена до создания клиентских подключений"
+  fi
+
   # --- подключения: все выбранные протоколы, один subId на пользователя ---
   step "Подключения"
   EXISTING=$(api GET inbounds/list)
@@ -898,8 +912,12 @@ main() {
     /usr/local/bin/kit net panel domain >/dev/null 2>&1 || { PANEL_ON=ip; later "Панель и подписку по домену включить не удалось: оставил по IP. Попробуйте позже: kit net panel domain"; }
   fi
   brand_xui_menu
-  # Автообновление kit и kit-sub: только подписанные релизы, выключается kit update --manual.
-  /usr/local/bin/kit update --auto >/dev/null 2>&1 || later "Автообновление не включилось – включите позже: kit update --auto"
+  # Upstream auto-updates would overwrite Cascade protections.
+  if [[ -z ${KIT_CASCADE_NEXT_LINK_FILE:-} ]]; then
+    /usr/local/bin/kit update --auto >/dev/null 2>&1 || later "Автообновление не включилось – включите позже: kit update --auto"
+  else
+    later "Cascade alpha: автообновления KIT выключены, чтобы не заменить маршруты кодом upstream."
+  fi
   # Общий лимит трафика: у пользователя несколько записей (AmneziaWG считается отдельно), раз в 5 минут их трафик складывается.
   /usr/local/bin/kit __limit-timer on >/dev/null 2>&1 || later "Проверка общего лимита трафика не включилась – включите позже: kit fix"
   /usr/local/bin/kit net dns on >/dev/null 2>&1 || later "DNS в подписке не настроился – включите позже: kit net dns on"
@@ -1402,17 +1420,22 @@ telegram_reachable() {
 
 proto_mtproto() {
   # MTProto бесполезен, если сам сервер не достаёт до Telegram (так бывает у отдельных хостеров).
-  if ! telegram_reachable; then
+  if [[ -z ${KIT_CASCADE_NEXT_LINK_FILE:-} ]] && ! telegram_reachable; then
     later "MTProto пропущен: с этого сервера недоступны серверы Telegram – прокси для Telegram здесь работать не будет."
     return
   fi
-  local settings
+  local settings cascade_mtg='{}'
+  # mtg is separate from Xray; force Telegram through the local
+  # Xray SOCKS bridge injected by 3X-UI v3.9.0.
+  if [[ -n ${KIT_CASCADE_NEXT_LINK_FILE:-} ]]; then
+    cascade_mtg='{"routeThroughXray":true,"routeXrayPort":18181,"outboundTag":"to-next-hop"}'
+  fi
   if [[ $SINGLE == yes ]]; then
     # FakeTLS-домен – свой сайт: nginx узнаёт MTProto по нему и передаёт mtg с реальным IP клиента.
-    settings=$(jq -nc --arg d "$SNI3" --argjson c "$(client_base mtproto)" '{fakeTlsDomain: $d, proxyProtocolListener: true, clients: [$c + {secret: ""}]}')
+    settings=$(jq -nc --arg d "$SNI3" --argjson c "$(client_base mtproto)" --argjson casc "$cascade_mtg" '{fakeTlsDomain: $d, proxyProtocolListener: true, clients: [$c + {secret: ""}]} + $casc')
     add_inbound "MTProto" "${INNER[mtproto]}" inner mtproto "$settings" '{}'
   else
-    settings=$(jq -nc --argjson c "$(client_base mtproto)" '{fakeTlsDomain: "www.cloudflare.com", clients: [$c + {secret: ""}]}')
+    settings=$(jq -nc --argjson c "$(client_base mtproto)" --argjson casc "$cascade_mtg" '{fakeTlsDomain: "www.cloudflare.com", clients: [$c + {secret: ""}]} + $casc')
     add_inbound "MTProto" "${PORTS[mtproto]}" tcp mtproto "$settings" '{}'
   fi
 }
