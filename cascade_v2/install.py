@@ -77,9 +77,53 @@ def require_environment():
         raise InstallError("Нужны systemd и iproute2; проверьте базовую Ubuntu")
 
 
-def confirm(text, required):
-    print("\n" + text)
-    return input(f"Для подтверждения введите {required}: ").strip() == required
+def confirm(text, default=False):
+    """Consistent yes/no questions. Empty input means the safer default (No)."""
+    suffix = "[Y/n]" if default else "[y/N]"
+    while True:
+        try:
+            answer = input(f"\n{text} {suffix}: ").strip().lower()
+        except EOFError as exc:
+            raise InstallError("Терминал отключился во время подтверждения") from exc
+        if answer == "":
+            return default
+        if answer == "y":
+            return True
+        if answer == "n":
+            return False
+        print("Введите y (да) или n (нет). Enter — нет.")
+
+
+def prompt_vless_link(target):
+    """Secret one-line link entry with re-prompt on malformed/accidental y/n."""
+    print(f"\nДля соединения с {target} нужна ПОЛНАЯ ссылка VLESS из его установщика.")
+    print("Формат: vless://UUID@[IPv6]:443?security=reality&...")
+    print("Вставьте ссылку одним действием и нажмите Enter.")
+    print("Символы не отображаются. Здесь нужен НЕ ответ y/n, а именно ссылка.")
+    print("Введите q для отмены.")
+    while True:
+        try:
+            supplied = getpass.getpass(f"VLESS-ссылка {target} (скрытый ввод): ")
+        except EOFError as exc:
+            raise InstallError("Ввод ссылки прерван") from exc
+        uri = supplied.strip().lstrip("\ufeff").strip()
+        if len(uri) >= 2 and uri[0] == uri[-1] and uri[0] in "\"'`":
+            uri = uri[1:-1].strip()
+        if uri.lower() == "q":
+            raise InstallError("Ввод ссылки отменён пользователем")
+        if uri.lower() in ("y", "n", "yes", "no", "да", "нет"):
+            print("Это ответ на вопрос y/n, но здесь требуется VLESS-ссылка.")
+            continue
+        if not uri:
+            print("Пустой ввод. Скопируйте полную ссылку с EXIT и вставьте её сюда.")
+            continue
+        try:
+            peer = hops.parse_link(uri)
+        except hops.ChainError as exc:
+            # Never log or echo the supplied secret.
+            print(f"Ссылка не принята: {exc}. Попробуйте вставить её ещё раз.")
+            continue
+        return uri, peer
 
 
 def choose(prompt, default):
@@ -377,10 +421,7 @@ def install(args):
     inspect_target(sni)
     next_uri = None
     if role == "relay":
-        next_uri = getpass.getpass(
-            "Вставьте VLESS-ссылку следующего узла (ввод скрыт): "
-        ).strip()
-        next_hop = hops.parse_link(next_uri)
+        next_uri, next_hop = prompt_vless_link("следующего узла (RELAY/EXIT)")
         if next_hop["address"] == address and next_hop["port"] == port:
             raise InstallError("RELAY не может ссылаться на собственный inbound")
     print("\nПлан:")
@@ -392,7 +433,7 @@ def install(args):
     print("  Будет установлен официальный Xray-core и изменён только его конфиг.")
     print("  SSH, маршрутизация, UFW, DNS и nftables НЕ изменяются.")
     print("  Исходящие соединения Ubuntu сами по себе НЕ туннелируются.")
-    if not confirm("Продолжить установку?", "УСТАНОВИТЬ"):
+    if not confirm("Установить Xray на этот чистый сервер с указанными параметрами?"):
         print("Отменено без изменений.")
         return
     secure_dir(STATE_DIR)
@@ -505,20 +546,19 @@ def install_entry():
         print("Доступна безопасная очистка только до установки 3X-UI/Xray.")
         print("Удаляется сохранённая VLESS-ссылка EXIT и пустая папка ENTRY;")
         print("другие файлы, данные сервера и настройки сети не затрагиваются.")
-        if not confirm("Удалить данные прежней попытки и задать все вопросы заново?",
-                       "НАЧАТЬ ЗАНОВО"):
+        if not confirm("Удалить только сохранённую ссылку от неудачной попытки и начать заново?"):
             print("Отменено. Данные предыдущей попытки сохранены.")
             return
         if clear_early_entry_data():
             print("Старая ссылка EXIT удалена. Начинаю установку с нуля.")
-    uri = getpass.getpass(
-        "\nВставьте VLESS-ссылку EXIT заново (ввод скрыт): "
-    ).strip()
+    uri, peer = prompt_vless_link("EXIT")
     try:
-        peer = hops.parse_link(uri)
         entry.check_exit_connectivity(peer)
-    except (hops.ChainError, entry.EntryError) as exc:
-        raise InstallError(str(exc)) from exc
+    except entry.EntryError as exc:
+        raise InstallError(
+            "Ссылка корректна, но соединение с EXIT по IPv6 не установлено. "
+            "Проверьте IPv6-маршрут и порт на EXIT. Подробности: " + str(exc)
+        ) from exc
     print("\nENTRY: маршрут по IPv6 к EXIT доступен:")
     print(" EXIT:", f'[{peer["address"]}]:{peer["port"]}')
     print(" Сам секрет VLESS-ссылки не отображается.")
@@ -532,7 +572,7 @@ def install_entry():
     print(" • системный Linux egress не заблокирован (apt/curl могут идти напрямую);")
     print(" • без консоли провайдера сетевой firewall не включается;")
     print(" • ошибка позднего этапа оставит частичную установку для диагностики.")
-    if not confirm("Установить 3X-UI KIT на чистый ENTRY?", "УСТАНОВИТЬ ENTRY"):
+    if not confirm("Установить 3X-UI KIT на ENTRY и направить клиентский трафик через EXIT?"):
         print("Отменено без изменений.")
         return
     entry.secure_write(entry.PEER_FILE, uri + "\n")
@@ -590,7 +630,7 @@ def restore():
     backup = Path(state["backup"])
     if not backup.is_file() or not backup.is_relative_to(STATE_DIR / "backups"):
         raise InstallError("Резервная копия отсутствует или находится вне /etc/kit-cascade")
-    if not confirm("Остановить Xray и восстановить конфиг до Cascade?", "ВОССТАНОВИТЬ"):
+    if not confirm("Остановить Xray и вернуть исходную конфигурацию?"):
         print("Отменено.")
         return
     rollback_config(backup)
@@ -599,7 +639,7 @@ def restore():
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="KIT-Cascade 2.0 EXIT/RELAY")
+    parser = argparse.ArgumentParser(description="KIT-Cascade 2.0 ENTRY/RELAY/EXIT")
     sub = parser.add_subparsers(dest="action")
     install_p = sub.add_parser("install", help="Интерактивный мастер установки")
     install_p.add_argument("--role", choices=["exit", "relay", "entry"])
