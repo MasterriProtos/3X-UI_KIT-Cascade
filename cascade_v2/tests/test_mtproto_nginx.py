@@ -60,7 +60,7 @@ class MtprotoNginxTests(unittest.TestCase):
             mod.render(BASE.replace("listen 443;", "listen 9999;"))
         with self.assertRaisesRegex(mod.ConfigError, "10445"):
             mod.render(BASE.replace("127.0.0.1:10445;", "127.0.0.1:10447;"))
-        with self.assertRaisesRegex(mod.ConfigError, "listen 8445"):
+        with self.assertRaisesRegex(mod.ConfigError, "listen 443"):
             mod.render(BASE.replace("listen 443;", "listen 8445;"))
 
     def test_cli_check_does_not_modify(self):
