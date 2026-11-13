@@ -153,16 +153,24 @@ class Panel:
 
     def get_template(self):
         obj = self.call("xray/")
+        # 3X-UI v3.9.0 uses jsonObj(c, string(result), nil):
+        # HTTP JSON 'obj' is therefore a *string containing JSON*,
+        # with xraySetting inside. Never assume obj is already a dict.
+        if isinstance(obj, str):
+            try:
+                obj = json.loads(obj)
+            except ValueError as exc:
+                raise EntryError("API 3X-UI вернул повреждённую JSON-строку") from exc
         if not isinstance(obj, dict) or "xraySetting" not in obj:
-            raise EntryError("Неожиданный ответ API: xraySetting отсутствует")
+            raise EntryError("Неожиданный ответ API: отсутствует xraySetting")
         setting = obj["xraySetting"]
         if isinstance(setting, str):
             try:
                 setting = json.loads(setting)
             except ValueError as exc:
                 raise EntryError("Неверный JSON конфигурации 3X-UI") from exc
-        if not isinstance(setting, dict):
-            raise EntryError("3X-UI вернула не объект Xray")
+        if not isinstance(setting, dict) or not isinstance(setting.get("outbounds"), list):
+            raise EntryError("3X-UI вернула некорректный Xray template")
         return setting
 
     def put_template(self, template):
