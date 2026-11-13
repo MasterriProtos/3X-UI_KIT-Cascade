@@ -450,6 +450,33 @@ def install(args):
 
 
 
+def clear_early_entry_data():
+    """Erase ONLY the saved EXIT link from an aborted pre-install attempt.
+
+    Must be called after the clean-host guards. Never recursively delete
+    /etc/kit-cascade/entry: that folder can contain backups from a later
+    partially completed installation.
+    """
+    directory = entry.STATE_DIR
+    if not directory.exists():
+        return False
+    if directory.is_symlink() or not directory.is_dir():
+        raise InstallError("Небезопасный путь /etc/kit-cascade/entry; удаление отменено")
+    contents = list(directory.iterdir())
+    if not contents:
+        directory.rmdir()
+        return False
+    if (len(contents) != 1 or contents[0].name != entry.PEER_FILE.name
+            or contents[0].is_symlink() or not contents[0].is_file()):
+        raise InstallError(
+            "В /etc/kit-cascade/entry обнаружены дополнительные файлы. "
+            "Автоматическое удаление запрещено: требуется диагностика."
+        )
+    contents[0].unlink()
+    directory.rmdir()
+    return True
+
+
 def install_entry():
     """Bootstrap original KIT from this checkout; never modify a running KIT."""
     root = Path(__file__).resolve().parents[1]
@@ -473,24 +500,20 @@ def install_entry():
             "повторное применение поверх частичной установки запрещено. "
             "Проверьте: python3 cascade_v2/install.py entry-status"
         )
-    if entry.PEER_FILE.exists():
-        # A previous run may have stopped during protocol/SNI questions,
-        # before package and Xray installation. Reuse only the exact same
-        # root-only link, and only after the clean-server guard above.
-        try:
-            entry.load_link(entry.PEER_FILE)
-        except (entry.EntryError, hops.ChainError) as exc:
-            raise InstallError("Сохранённая ссылка EXIT повреждена: " + str(exc)) from exc
-        print("\nОбнаружена ранняя прерванная попытка ENTRY.")
-        print("3X-UI/Xray не установлены; сохранённую ссылку EXIT можно использовать снова.")
-        if not confirm("Продолжить с сохранённой ссылкой?", "ПРОДОЛЖИТЬ ENTRY"):
-            print("Отменено. Настройки и ссылка сохранены.")
+    if entry.STATE_DIR.exists():
+        print("\nОбнаружены данные предыдущей попытки настройки ENTRY.")
+        print("Доступна безопасная очистка только до установки 3X-UI/Xray.")
+        print("Удаляется сохранённая VLESS-ссылка EXIT и пустая папка ENTRY;")
+        print("другие файлы, данные сервера и настройки сети не затрагиваются.")
+        if not confirm("Удалить данные прежней попытки и задать все вопросы заново?",
+                       "НАЧАТЬ ЗАНОВО"):
+            print("Отменено. Данные предыдущей попытки сохранены.")
             return
-        uri = entry.PEER_FILE.read_text(encoding="utf-8").strip()
-    else:
-        uri = getpass.getpass(
-            "\nВставьте VLESS-ссылку EXIT (ввод скрыт, Enter по окончании): "
-        ).strip()
+        if clear_early_entry_data():
+            print("Старая ссылка EXIT удалена. Начинаю установку с нуля.")
+    uri = getpass.getpass(
+        "\nВставьте VLESS-ссылку EXIT заново (ввод скрыт): "
+    ).strip()
     try:
         peer = hops.parse_link(uri)
         entry.check_exit_connectivity(peer)
