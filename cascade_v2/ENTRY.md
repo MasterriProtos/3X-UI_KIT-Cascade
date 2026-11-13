@@ -70,6 +70,20 @@ sudo kit check
 
 Подключитесь с клиента к выбранному протоколу ENTRY и откройте `https://api.ipify.org`. Должен отобразиться публичный IP EXIT. Затем **временно** проверьте, что если EXIT отключится, клиент не получит прямого выхода через ENTRY; сервер EXIT должен оставаться доступным для SSH.
 
+## Диагностика MTProto через EXIT
+
+Если `kit check --deep` показывает запущенный `mtg` и успешный FakeTLS, но предупреждает **«с сервера не видно серверов Telegram»**, это предупреждение о **прямом** TCP-соединении с ENTRY, **не о цепочке через EXIT**. Для MTProto с `routeThroughXray:true` требуется проверять локальный SOCKS5-мост `mtg → Xray → to-next-hop → EXIT → Telegram`.
+
+```bash
+cd /root/3X-UI_KIT-Cascade
+git pull --ff-only
+python3 cascade_v2/install.py entry-mtproto-probe
+```
+
+Проверка только читает SQLite 3X-UI и Xray template, **не выводит MTProto-секреты и не меняет сервер**. Она сверяет `routeThroughXray`, `outboundTag`, `routeXrayPort` и делает SOCKS5 CONNECT через реальный локальный порт к нескольким адресам Telegram на TCP/443. Успешное подключение подтверждает работоспособность маршрута на уровне TCP, **но не гарантирует полную авторизацию Telegram, подлинность ссылки и работу всех DC**. Ошибка `Connection refused` на локальном SOCKS — повод проверить генерацию Xray-конфига; SOCKS5-код ошибки при обращении к Telegram — повод изучить исходящие подключения EXIT. В конце по необходимости проверьте логи `journalctl -u x-ui -n 80 --no-pager` и `tail -n 80 /var/log/x-ui/3xui.log`, удалив перед отправкой токены, пароли и секреты.
+
+В будущих установках `kit check` не будет выводить ложное предупреждение о прямой недоступности Telegram для Cascade ENTRY. На ранее установленном KIT обновление только Git-репозитория **не заменяет** `/usr/local/bin/kit`, но команда `entry-mtproto-probe` доступна напрямую из обновлённого checkout.
+
 ## Ложный failed при проверке TCP-outbound в панели 3X-UI
 
 В закреплённой панели **3X-UI v3.9.0** тест TCP для outbound с IPv6 может показывать:
