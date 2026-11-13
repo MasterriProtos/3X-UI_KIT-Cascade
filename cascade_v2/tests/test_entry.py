@@ -189,5 +189,35 @@ class EntryTests(unittest.TestCase):
 
 
 
+    def test_route_validation_rejects_direct_precedence(self):
+        cfg = entry.merge_template(original(), NODE)
+        entry.assert_cascade_template(cfg)
+        bypass = json.loads(json.dumps(cfg))
+        bypass["routing"]["rules"].insert(1, {
+            "type": "field", "domain": ["geosite:ru"],
+            "outboundTag": "direct"
+        })
+        with self.assertRaises(entry.EntryError):
+            entry.assert_cascade_template(bypass)
+
+    def test_mark_complete_requires_actual_saved_route_and_probe(self):
+        with tempfile.TemporaryDirectory() as d:
+            state = Path(d) / "state.json"
+            state.write_text(json.dumps({"schema": 1, "role": "entry",
+                                         "status": "configured"}))
+            cfg = entry.merge_template(original(), NODE)
+            with mock.patch.object(entry, "STATE_FILE", state), \
+                 mock.patch.object(entry, "Panel") as fake:
+                fake.return_value.get_template.return_value = cfg
+                fake.return_value.test_outbound.return_value = {"success": True}
+                entry.mark_complete()
+                self.assertEqual(json.loads(state.read_text())["status"], "installed")
+                fake.return_value.test_outbound.assert_called_once()
+                fake.return_value.get_template.return_value = original()
+                with self.assertRaises(entry.EntryError):
+                    entry.mark_complete()
+
+
+
 if __name__ == "__main__":
     unittest.main()
