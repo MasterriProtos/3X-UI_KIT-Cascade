@@ -159,5 +159,23 @@ class EntryTests(unittest.TestCase):
             self.assertEqual(wrapped.call_args.args[0].role, "entry")
 
 
+    def test_original_kit_hook_precedes_all_client_inbounds(self):
+        source = (Path(__file__).resolve().parents[2] /
+                  "scripts" / "3x-ui.sh").read_text(encoding="utf-8")
+        self.assertIn('python3 "$cascade_path" apply', source)
+        self.assertIn('routeThroughXray', source)
+        self.assertIn('routeXrayPort', source)
+        self.assertLess(source.index('python3 "$cascade_path" apply'),
+                        source.index('for p in "${PROTOS[@]}"; do "proto_$p"; done'))
+        self.assertIn('[[ -z ${KIT_CASCADE_NEXT_LINK_FILE:-} ]] && ! telegram_reachable',
+                      source)
+
+    def test_kit_disables_upstream_update_in_cascade(self):
+        source = (Path(__file__).resolve().parents[2] /
+                  "scripts" / "kit.sh").read_text(encoding="utf-8")
+        self.assertIn('if [[ ${1:-} == update ]]', source)
+        self.assertIn("KIT-Cascade alpha", source)
+
+
 if __name__ == "__main__":
     unittest.main()
