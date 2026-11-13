@@ -123,6 +123,7 @@ def main():
         with tempfile.TemporaryDirectory(prefix="cascade-live-") as temp:
             for name, cfg in (("exit", exit_cfg), ("relay", relay_cfg), ("entry", entry_cfg)):
                 config = Path(temp) / f"{name}.json"
+                cfg["log"]["loglevel"] = "debug"  # only in disposable CI
                 config.write_text(hops.format_plan(cfg))
                 subprocess.run([XRAY, "run", "-test", "-config", str(config)], check=True)
                 logs = open(Path(temp) / f"{name}.log", "w", encoding="utf-8")
@@ -134,7 +135,17 @@ def main():
                 if proc.poll() is not None:
                     raise RuntimeError(f"{name} Xray exited immediately; logs: " +
                                        (Path(temp) / f"{name}.log").read_text()[-2000:])
-            check_socks(socks_port, echo.server_address[1])
+            try:
+                check_socks(socks_port, echo.server_address[1])
+            except Exception:
+                for stream in streams:
+                    stream.flush()
+                for name in ("exit", "relay", "entry"):
+                    logfile = Path(temp) / f"{name}.log"
+                    if logfile.exists():
+                        print("== XRAY LOG", name, "==", file=sys.stderr)
+                        print(logfile.read_text()[-6000:], file=sys.stderr)
+                raise
     except Exception:
         for process in processes:
             if process.poll() is not None:
