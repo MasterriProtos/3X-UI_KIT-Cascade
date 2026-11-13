@@ -2159,7 +2159,13 @@ check_mtproto() {
     stale=$(mt_stale "$row" | grep -c . || true)
     if ((stale > 0)); then c_bad mtproto "MTProto: у $stale польз. в секрете прежний сайт маскировки – nginx его не знает, ссылки tg:// не работают (kit → Проверка сервера → Исправить безопасное выпустит секреты под нынешний сайт)"; fi
   fi
-  telegram_reachable || c_warn "MTProto: с сервера не видно серверов Telegram – прокси для Telegram работать не будет (уточните у хостера)"
+  # The entry's local mtg uses a SOCKS5 bridge into Xray instead of direct egress.
+  # A direct Telegram TCP probe would be misleading here (and may be blocked).
+  if [[ -f /etc/kit-cascade/entry/state.json ]]; then
+    c_info "MTProto Cascade: прямой доступ ENTRY к Telegram не требуется; проверьте: python3 cascade_v2/install.py entry-mtproto-probe (из checkout)"
+  else
+    telegram_reachable || c_warn "MTProto: с сервера не видно серверов Telegram – прокси для Telegram работать не будет (уточните у хостера)"
+  fi
   [[ $CHECK_DEEP == yes && $port =~ ^[0-9]+$ ]] || return 0
   command -v python3 >/dev/null || return 0
   # По одному включённому клиенту на каждый сайт в секретах.
