@@ -30,6 +30,7 @@ STATE_DIR = Path("/etc/kit-cascade/entry")
 PEER_FILE = STATE_DIR / "next-hop.txt"
 BACKUP = STATE_DIR / "xray-template-before.json"
 STATE_FILE = STATE_DIR / "state.json"
+DB_FILE = Path("/etc/x-ui/x-ui.db")
 ENV_FILE = Path("/etc/x-ui/install-result.env")
 OUTBOUND_TAG = "to-next-hop"
 
@@ -294,11 +295,11 @@ def status():
         print("ENTRY: не настроен")
         return
     state = json.loads(STATE_FILE.read_text(encoding="utf-8"))
-    print("ENTRY:", state["status"], "→ EXIT", state["next"])
-    panel = Panel()
+    print("ENTRY:", state["status"], "→ EXIT", state.get("next", "(отключён)"))
     if state["status"] == "restored-disabled":
         print("x-ui намеренно остановлена после отката, доступ клиентов закрыт.")
         return
+    panel = Panel()
     cfg = panel.get_template()
     print("Маршрут Xray:", cfg["outbounds"][0].get("tag"))
     if cfg["outbounds"][0].get("tag") != OUTBOUND_TAG:
@@ -314,7 +315,7 @@ def restore():
     """
     if not BACKUP.is_file():
         raise EntryError("Нет сохранённого Xray template для отката")
-    database = Path("/etc/x-ui/x-ui.db")
+    database = DB_FILE
     if not database.is_file():
         raise EntryError("Не найдена стандартная SQLite база x-ui.db; откат запрещён")
     if input("Остановить x-ui, отключить автозапуск и вернуть старые маршруты? Введите ОТКАТ: ").strip() != "ОТКАТ":
