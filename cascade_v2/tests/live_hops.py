@@ -114,6 +114,12 @@ def main():
         "outbounds": [entry_outbound],
     }
     echo = socketserver.ThreadingTCPServer(("127.0.0.1", 0), Echo)
+    # CI-only allowlist: Xray 26.x normally blocks loopback targets from VLESS.
+    # Permit exactly this disposable echo port; NEVER change production EXIT.
+    exit_cfg["outbounds"][0]["settings"]["finalRules"] = [
+        {"action": "allow", "network": "tcp",
+         "port": str(echo.server_address[1]), "ip": ["127.0.0.1/32"]},
+    ]
     echo.daemon_threads = True
     thread = threading.Thread(target=echo.serve_forever, daemon=True)
     thread.start()
