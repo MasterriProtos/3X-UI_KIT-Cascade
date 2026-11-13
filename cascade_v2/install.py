@@ -240,7 +240,10 @@ def test_config(config):
     with tempfile.TemporaryDirectory(prefix="kit-cascade-test-") as folder:
         temporary = Path(folder) / "config.json"
         temporary.write_text(hops.format_plan(config), encoding="utf-8")
-        run([XRAY, "run", "-test", "-config", temporary], timeout=30)
+        result = run([XRAY, "run", "-test", "-config", temporary], timeout=30)
+        if result.stderr and "Warning" in result.stderr:
+            print("Предупреждения Xray при проверке SNI/порта:")
+            print(result.stderr[-1600:])
 
 
 def rollback_config(backup):
@@ -361,9 +364,9 @@ def install(args):
             raise InstallError("Неверная роль")
         role = "exit" if answer == "1" else "relay"
     address = select_ipv6()
-    port = hops.check_port(choose("TCP порт для входящего VLESS", "24443"))
+    port = hops.check_port(choose("TCP порт для входящего VLESS", "443"))
     ensure_port_free(address, port)
-    sni = hops.check_sni(choose("SNI/REALITY target (TLS 1.3)", "www.microsoft.com"))
+    sni = hops.check_sni(input("Введите домен SNI/REALITY target (TLS 1.3): ").strip())
     inspect_target(sni)
     next_uri = None
     if role == "relay":
