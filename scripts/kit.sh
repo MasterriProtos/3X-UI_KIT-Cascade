@@ -205,6 +205,16 @@ human() { # байты → «1.2 ГБ»
 }
 
 sub_url() { echo "${SUB_BASE}$1"; }
+# Dynamic public MTProto port: use 8445 only if the Cascade listener exists.
+mt_public_port() {
+  if [[ ${SINGLE:-no} == yes && -f /etc/kit-cascade/entry/state.json ]] \
+      && [[ -f /etc/nginx/kit-stream.conf ]] \
+      && grep -Fq '# KIT CASCADE MTProto direct 8445' /etc/nginx/kit-stream.conf; then
+    echo 8445
+  else
+    echo 443
+  fi
+}
 
 # Отдельные ссылки на протоколы – прямо из подписки 3X-UI внутри сервера (мимо kit-sub, который
 # прячет от VPN-приложений vpn:// и tg://). collect_links subId фильтр – печатает подходящие строки.
@@ -221,8 +231,11 @@ collect_links() {
     out+=$(grep -E "$filter" <<<"$raw" || true)$'\n'
   done
   # Порт попадает в выражение sed – только если это число.
-  local inner=${MTPROTO_INNER:-10445}
-  [[ ${SINGLE:-no} == yes && $inner =~ ^[0-9]{1,5}$ ]] && out=$(sed "s/^\(tg:\/\/proxy?\)\(.*\)port=$inner/\1\2port=443/" <<<"$out")
+  if [[ ${SINGLE:-no} == yes ]]; then
+    local mt_port
+    mt_port=$(mt_public_port)
+    out=$(sed -E "/^tg:\/\/proxy\?/s/([?&]port=)[0-9]+/\1$mt_port/" <<<"$out")
+  fi
   # После kit net site панель может взять в ссылку прежнее (льготное) имя сайта – ставим нынешнее.
   [[ ! -f ${SNI_GRACE_SUB:-} ]] || out=$(grace_links <<<"$out")
   grep . <<<"$out" || true
@@ -341,7 +354,7 @@ cmd_link() {
       echo
       echo "$out"
       echo
-      [[ ${SINGLE:-no} == yes ]] && { echo "${D}Порт 443 – верный (в панели ссылка такая же). ${MTPROTO_INNER:-10445} – внутренний порт сервера, снаружи он закрыт:"; echo "если увидите его в старой ссылке, берите ссылку отсюда.${N}"; echo; }
+       [[ ${SINGLE:-no} == yes ]] && { echo "${D}MTProto: используйте TCP-порт $(mt_public_port); ${MTPROTO_INNER:-10445} – внутренний порт, снаружи закрыт.${N}"; echo; }
       command -v qrencode >/dev/null && qrencode -t ANSIUTF8 -m 1 "$(head -1 <<<"$out")"
       return 0 ;;
     "" | --all)
@@ -2015,8 +2028,8 @@ mt_stale() { # строка MTProto → «email<TAB>секрет» клиент�
   done < <(jq -r '(.settings | if type == "string" then fromjson else . end).clients[]? | [.email // "", .secret // ""] | @tsv' <<<"$1")
   return 0
 }
-mt_host_ok() { # группы hosts подключения (JSON) → 0, если ссылка ведёт на адрес сервера и порт 443
-  jq -e --arg a "${LINK_HOST:-$HOST}:443" 'type == "array" and any(.[]; any(.hosts[]?; . == $a))' <<<"$1" >/dev/null 2>&1
+mt_host_ok() { # группы hosts подключения (JSON) → 0, если ссылка ведёт на текущий публичный порт
+  jq -e --arg a "${LINK_HOST:-$HOST}:$(mt_public_port)" 'type == "array" and any(.[]; any(.hosts[]?; . == $a))' <<<"$1" >/dev/null 2>&1
 }
 
 # Секреты клиентов – под нынешний сайт подключения (ключ прежний). Только «всё на 443»: с отдельным портом
@@ -2040,21 +2053,22 @@ mt_rekey() {
 # из таблицы hosts: без строки там ссылка ведёт на localhost:10445. Добавляем адрес сервера с портом 443 через API.
 # restore – из копии: группы hosts MTProto с чужим адресом или портом удаляем, адрес из архива не берём.
 mt_sync() { # [restore]
-  local mode=${1:-} row id addr groups g
+  local mode=${1:-} row id addr groups g mt_port
+  mt_port=$(mt_public_port)
   [[ ${SINGLE:-no} == yes ]] || return 0
   row=$(mt_row "$(api GET inbounds/list)"); [[ -n $row && $(jq -r '.listen' <<<"$row") == 127.0.0.1 ]] || return 0
   id=$(jq -r '.id' <<<"$row"); addr=${LINK_HOST:-$HOST}
   [[ $id =~ ^[0-9]+$ && $addr =~ ^[A-Za-z0-9.-]{1,253}$ ]] || return 1
   groups=$(api GET "hosts/byInbound/$id")
   if [[ $mode == restore ]]; then
-    for g in $(jq -r --arg a "$addr:443" --arg h "${HOST:-}:443" '.[]? | select(.port != 443 or any(.hosts[]?; . != $a and . != $h)) | .groupId' <<<"$groups"); do
+    for g in $(jq -r --arg a "$addr:$mt_port" --arg h "${HOST:-}:$mt_port" --argjson p "$mt_port" '.[]? | select(.port != $p or any(.hosts[]?; . != $a and . != $h)) | .groupId' <<<"$groups"); do
       [[ $g =~ ^[A-Za-z0-9_-]{1,64}$ ]] && api POST "hosts/del/$g" >/dev/null
     done
     groups=$(api GET "hosts/byInbound/$id")
   fi
   if ! mt_host_ok "$groups"; then
-    api POST hosts/add "$(jq -nc --argjson i "$id" --arg h "$addr:443" '{inboundIds: [$i], hosts: [$h], remark: "kit", security: "same", port: 443}')" >/dev/null
-    say "MTProto: ссылка в панели ведёт на $addr:443"
+    api POST hosts/add "$(jq -nc --argjson i "$id" --arg h "$addr:$mt_port" --argjson p "$mt_port" '{inboundIds: [$i], hosts: [$h], remark: "kit", security: "same", port: $p}')" >/dev/null
+    say "MTProto: ссылка в панели ведёт на $addr:$mt_port"
   fi
   mt_rekey
 }
@@ -2151,10 +2165,10 @@ check_mtproto() {
   else c_bad svc:x-ui "MTProto: процесс mtg не запущен (панель обычно поднимает его сама за полминуты; журнал: tail -n 30 /var/log/x-ui/3xui.log)"; fi
   port=$(jq -r '.port' <<<"$row")
   if [[ ${SINGLE:-no} == yes && $(jq -r '.listen' <<<"$row") == 127.0.0.1 ]]; then
-    port=443
+    port=$(mt_public_port)
     if groups=$( (api GET "hosts/byInbound/$(jq -r '.id' <<<"$row")") 2>/dev/null); then
-      if mt_host_ok "$groups"; then c_ok "MTProto: ссылка в панели ведёт на порт 443"
-      else c_bad mtproto "MTProto: ссылка в панели ведёт не на ${LINK_HOST:-$HOST}:443, а на внутренний порт ${MTPROTO_INNER:-10445} или чужой адрес (kit → Проверка сервера → Исправить безопасное добавит верный)"; fi
+      if mt_host_ok "$groups"; then c_ok "MTProto: ссылка в панели ведёт на порт $port"
+      else c_bad mtproto "MTProto: ссылка в панели ведёт не на ${LINK_HOST:-$HOST}:$port, а на внутренний порт ${MTPROTO_INNER:-10445} или чужой адрес (kit → Проверка сервера → Исправить безопасное добавит верный)"; fi
     fi
     stale=$(mt_stale "$row" | grep -c . || true)
     if ((stale > 0)); then c_bad mtproto "MTProto: у $stale польз. в секрете прежний сайт маскировки – nginx его не знает, ссылки tg:// не работают (kit → Проверка сервера → Исправить безопасное выпустит секреты под нынешний сайт)"; fi
