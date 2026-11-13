@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timezone
 import getpass
+import http.client
 import grp
 import ipaddress
 import json
@@ -31,6 +32,7 @@ import hops
 STATE_DIR = Path("/etc/kit-cascade")
 STATE_FILE = STATE_DIR / "state.json"
 LINK_FILE = STATE_DIR / "link.txt"
+MANAGED_CORE = STATE_DIR / "managed-core.txt"
 CONFIG_FILE = Path("/usr/local/etc/xray/config.json")
 XRAY = Path("/usr/local/bin/xray")
 XRAY_UNIT = Path("/etc/systemd/system/xray.service")
@@ -139,6 +141,20 @@ def ensure_port_free(address, port):
 def ensure_clean():
     if STATE_FILE.exists():
         raise InstallError("Этот узел уже установлен; используйте status или restore")
+    if MANAGED_CORE.exists():
+        # A previous successful restore left our Xray binary (not a pre-existing one).
+        if not XRAY.is_file() or not XRAY_UNIT.is_file():
+            raise InstallError("Неполная старая установка; требуется ручная диагностика")
+        active = run(["systemctl", "is-active", "--quiet", "xray"], check=False)
+        if active.returncode == 0:
+            raise InstallError("Xray всё ещё запущен; повторная установка запрещена")
+        try:
+            placeholder = json.loads(CONFIG_FILE.read_text())
+        except (OSError, ValueError):
+            raise InstallError("Существующая конфигурация не является пустой")
+        if placeholder != {}:
+            raise InstallError("Существующая конфигурация Xray изменена вручную; отказ")
+        return
     if XRAY.exists() or XRAY_UNIT.exists() or CONFIG_FILE.exists():
         raise InstallError(
             "Обнаружен существующий Xray. Установщик рассчитан только на чистый VPS. "
@@ -306,20 +322,15 @@ def proxy_probe(uri):
                 with ctx.wrap_socket(s, server_hostname=host.decode()) as tls:
                     tls.sendall(
                         b"GET / HTTP/1.1\r\nHost: api.ipify.org\r\n"
-                        b"Connection: close\r\n\r\n"
+                        b"Accept-Encoding: identity\r\nConnection: close\r\n\r\n"
                     )
-                    response = b""
-                    while len(response) < 4096:
-                        chunk = tls.recv(1024)
-                        if not chunk:
-                            break
-                        response += chunk
-            if not (response.startswith(b"HTTP/1.1 200") or
-                    response.startswith(b"HTTP/2 200")):
-                raise InstallError("HTTPS-проба через VLESS не получила HTTP 200")
-            body = response.partition(b"\r\n\r\n")[2].strip()
-            if b"\r\n" in body:  # chunked response: extract the address line
-                body = body.splitlines()[-1].strip()
+                    response = http.client.HTTPResponse(tls)
+                    response.begin()
+                    if response.status != 200:
+                        raise InstallError(
+                            f"HTTPS-проба через VLESS получила HTTP {response.status}"
+                        )
+                    body = response.read(256).strip()
             if not body:
                 raise InstallError("HTTPS-проба вернула пустой IP")
             try:
@@ -376,7 +387,11 @@ def install(args):
     core_attempted = False
     try:
         core_attempted = True
-        install_core()
+        if not MANAGED_CORE.exists():
+            install_core()
+            write_atomic(MANAGED_CORE, (
+                "Xray установлен KIT-Cascade; после restore повторная установка разрешена.\n"
+            ).encode())
         local = create_local(address, port, sni)
         config = hops.node_config(role, local, next_uri)
         test_config(config)
@@ -388,7 +403,8 @@ def install(args):
             write_atomic(backup, CONFIG_FILE.read_bytes())
         write_config(config)
         run([XRAY, "run", "-test", "-config", CONFIG_FILE])
-        run(["systemctl", "enable", "--now", "xray"])
+        run(["systemctl", "enable", "xray"])
+        run(["systemctl", "restart", "xray"])
         run(["systemctl", "is-active", "--quiet", "xray"])
         print("\nПроверка настоящего VLESS-туннеля до интернета...")
         exit_ip = proxy_probe(saved_link)
@@ -411,6 +427,8 @@ def install(args):
     except Exception:
         if core_attempted:
             try:
+                if not MANAGED_CORE.exists() and XRAY.is_file() and XRAY_UNIT.is_file():
+                    write_atomic(MANAGED_CORE, b"Managed by KIT-Cascade (partial install)\n")
                 rollback_config(backup)
             except Exception as err:
                 print("ВНИМАНИЕ: автоматический откат завершился ошибкой:", err,
