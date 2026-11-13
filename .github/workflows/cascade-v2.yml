@@ -5,10 +5,14 @@ on:
     branches: [multi-hop-v2]
     paths:
       - 'cascade_v2/**'
+      - 'scripts/3x-ui.sh'
+      - 'scripts/kit.sh'
       - '.github/workflows/cascade-v2.yml'
   pull_request:
     paths:
       - 'cascade_v2/**'
+      - 'scripts/3x-ui.sh'
+      - 'scripts/kit.sh'
       - '.github/workflows/cascade-v2.yml'
   workflow_dispatch:
 
