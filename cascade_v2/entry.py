@@ -345,9 +345,19 @@ def restore():
     database = DB_FILE
     if not database.is_file():
         raise EntryError("Не найдена стандартная SQLite база x-ui.db; откат запрещён")
-    if input("Остановить x-ui, отключить автозапуск и вернуть старые маршруты? Введите ОТКАТ: ").strip() != "ОТКАТ":
-        print("Отменено.")
-        return
+    print("Откат остановит панель и отключит её автозапуск.")
+    print("База будет сохранена, но клиентские подключения останутся выключенными.")
+    while True:
+        try:
+            answer = input("Остановить x-ui и восстановить прежние маршруты? [y/N]: ").strip().lower()
+        except EOFError as exc:
+            raise EntryError("Терминал отключился во время подтверждения") from exc
+        if answer in ("n", ""):
+            print("Отменено без изменений.")
+            return
+        if answer == "y":
+            break
+        print("Введите y (да) или n (нет). Enter — нет.")
     subprocess.run(["systemctl", "stop", "x-ui"], check=True)
     subprocess.run(["systemctl", "disable", "x-ui"], check=True)
     old = json.loads(BACKUP.read_text(encoding="utf-8"))
