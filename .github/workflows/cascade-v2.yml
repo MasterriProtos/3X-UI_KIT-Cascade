@@ -59,7 +59,9 @@ jobs:
                   k, v = row.split(":", 1)
                   fields[k.strip().lower().replace(" ", "")] = v.strip()
           private = fields["privatekey"]
-          public = next((v for k, v in fields.items()\n                         if k.startswith("password") or k.startswith("publickey")), None)\n          assert private and public, "Unable to parse X25519 output"
+          public = next((v for k, v in fields.items()
+                         if k.startswith("password") or k.startswith("publickey")), None)
+          assert private and public, "Unable to parse X25519 output"
           node = {
               "address": "2606:4700:4700::1111",
               "port": 24443,
