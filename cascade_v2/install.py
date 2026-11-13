@@ -28,6 +28,7 @@ import urllib.request
 import uuid
 
 import hops
+import entry
 
 STATE_DIR = Path("/etc/kit-cascade")
 STATE_FILE = STATE_DIR / "state.json"
@@ -354,15 +355,19 @@ def proxy_probe(uri):
 
 
 def install(args):
-    ensure_clean()
     role = args.role
     if not role:
         print("\n1. EXIT — выходной сервер")
         print("2. RELAY — промежуточный сервер")
+        print("3. ENTRY — входной сервер с 3X-UI KIT")
         answer = input("Выберите роль [1]: ").strip() or "1"
-        if answer not in ("1", "2"):
+        if answer not in ("1", "2", "3"):
             raise InstallError("Неверная роль")
-        role = "exit" if answer == "1" else "relay"
+        role = {"1": "exit", "2": "relay", "3": "entry"}[answer]
+    if role == "entry":
+        install_entry()
+        return
+    ensure_clean()
     address = select_ipv6()
     port = hops.check_port(choose("TCP порт для входящего VLESS", "443"))
     ensure_port_free(address, port)
@@ -442,7 +447,82 @@ def install(args):
         raise
 
 
+
+def install_entry():
+    """Bootstrap original KIT from this checkout; never modify a running KIT."""
+    root = Path(__file__).resolve().parents[1]
+    script = root / "scripts" / "3x-ui.sh"
+    if not script.is_file() or not (root / "scripts" / "kit.sh").is_file():
+        raise InstallError("Не найдены скрипты оригинального KIT в checkout")
+    if (Path("/usr/local/x-ui").exists() or
+            Path("/etc/x-ui/install-result.env").exists() or
+            Path("/root/3x-ui.txt").exists()):
+        raise InstallError(
+            "ENTRY требует чистый сервер без 3X-UI/KIT. "
+            "Автоматическое обновление существующей установки запрещено."
+        )
+    if entry.STATE_FILE.exists() or entry.PEER_FILE.exists():
+        raise InstallError(
+            "Найдены следы предыдущей установки ENTRY. Повторное применение "
+            "поверх частично настроенной панели небезопасно. См. entry-status."
+        )
+    uri = getpass.getpass(
+        "\nВставьте VLESS-ссылку EXIT (ввод скрыт, Enter по окончании): "
+    ).strip()
+    try:
+        peer = hops.parse_link(uri)
+        entry.check_exit_connectivity(peer)
+    except (hops.ChainError, entry.EntryError) as exc:
+        raise InstallError(str(exc)) from exc
+    print("\nENTRY: маршрут по IPv6 к EXIT доступен:")
+    print(" EXIT:", f'[{peer["address"]}]:{peer["port"]}')
+    print(" Сам секрет VLESS-ссылки не отображается.")
+    print("\nШтатный мастер 3X-UI KIT далее предложит выбрать:")
+    print(" • клиентские протоколы (REALITY, Hysteria2, TUIC, AWG, MTProto и другие);")
+    print(" • сайт маскировки, свой домен или автоматический подбор;")
+    print(" • данные панели и подписки.")
+    print("\nПРАВИЛА БЕЗОПАСНОСТИ:")
+    print(" • действующие SSH, UFW, nftables и маршруты остаются неизменными;")
+    print(" • протоколы KIT появятся только после настройки Xray через EXIT;")
+    print(" • системный Linux egress не заблокирован (apt/curl могут идти напрямую);")
+    print(" • без консоли провайдера сетевой firewall не включается;")
+    print(" • ошибка позднего этапа оставит частичную установку для диагностики.")
+    if not confirm("Установить 3X-UI KIT на чистый ENTRY?", "УСТАНОВИТЬ ENTRY"):
+        print("Отменено без изменений.")
+        return
+    entry.secure_write(entry.PEER_FILE, uri + "\n")
+    env = os.environ.copy()
+    env["KIT_CASCADE_NEXT_LINK_FILE"] = str(entry.PEER_FILE)
+    # Do not pass secrets by command line or environment; only the file path.
+    print("\nЗапускаю установщик KIT из текущей ветки multi-hop-v2...")
+    try:
+        subprocess.run(
+            ["bash", str(script), "--no-ufw"],
+            env=env, cwd=str(root), check=True,
+            stdin=sys.stdin, stdout=sys.stdout, stderr=sys.stderr,
+        )
+    except (subprocess.CalledProcessError, OSError) as exc:
+        print(
+            "ОШИБКА: штатный KIT не завершился. "
+            "Существующие Xray-маршруты не возвращаются к direct автоматически.",
+            file=sys.stderr,
+        )
+        print(
+            "Проверьте journalctl -u x-ui -n 80 и "
+            "python3 cascade_v2/entry.py status. "
+            "Не запускайте старый установщик поверх частичной установки.",
+            file=sys.stderr,
+        )
+        raise InstallError(f"ENTRY неполная: {exc}") from exc
+    entry.mark_complete()
+    print("\nENTRY установлен. Все клиентские TCP/UDP маршрутизируются через EXIT.")
+    print("Проверить: python3 cascade_v2/install.py entry-status")
+
+
 def show_status():
+    if entry.STATE_FILE.exists():
+        entry.status()
+        return
     if not STATE_FILE.exists():
         print("KIT-Cascade ещё не установлен на этом сервере")
         return
@@ -456,6 +536,9 @@ def show_status():
 
 
 def restore():
+    if entry.STATE_FILE.exists():
+        entry.restore()
+        return
     if not STATE_FILE.exists():
         raise InstallError("Нет сохранённого состояния для восстановления")
     state = json.loads(STATE_FILE.read_text(encoding="utf-8"))
@@ -474,16 +557,18 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="KIT-Cascade 2.0 EXIT/RELAY")
     sub = parser.add_subparsers(dest="action")
     install_p = sub.add_parser("install", help="Интерактивный мастер установки")
-    install_p.add_argument("--role", choices=["exit", "relay"])
+    install_p.add_argument("--role", choices=["exit", "relay", "entry"])
     sub.add_parser("status", help="Показать состояние")
+    sub.add_parser("entry-status", help="Проверить каскадную маршрутизацию ENTRY")
     sub.add_parser("show-link", help="Показать секретную ссылку")
     sub.add_parser("restore", help="Восстановить конфиг и отключить Xray")
+    sub.add_parser("entry-restore", help="Безопасно остановить ENTRY и откатить маршруты")
     args = parser.parse_args(argv)
     try:
         require_environment()
         action = args.action
         if not action:
-            print("\nKIT-Cascade 2.0\n 1. Установить EXIT / RELAY\n"
+            print("\nKIT-Cascade 2.0\n 1. Установить EXIT / RELAY / ENTRY\n"
                   " 2. Статус\n 3. Показать ссылку\n 4. Восстановить\n 0. Выход")
             value = input("Выбор: ").strip()
             action = {"1": "install", "2": "status", "3": "show-link",
@@ -496,12 +581,16 @@ def main(argv=None):
             install(args)
         elif action == "status":
             show_status()
+        elif action == "entry-status":
+            entry.status()
         elif action == "show-link":
             if not LINK_FILE.exists():
                 raise InstallError("Ссылка ещё не создана")
             print(LINK_FILE.read_text().strip())
         elif action == "restore":
             restore()
+        elif action == "entry-restore":
+            entry.restore()
         return 0
     except (InstallError, hops.ChainError, OSError, ValueError, KeyError) as exc:
         print("ОШИБКА:", exc, file=sys.stderr)
