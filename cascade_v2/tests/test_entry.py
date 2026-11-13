@@ -177,5 +177,15 @@ class EntryTests(unittest.TestCase):
         self.assertIn("KIT-Cascade alpha", source)
 
 
+    def test_entry_refuses_existing_exit_xray_binary(self):
+        with tempfile.TemporaryDirectory() as folder:
+            existing = Path(folder) / "xray"
+            existing.write_bytes(b"already installed")
+            with mock.patch.object(install, "XRAY", existing):
+                with self.assertRaises(install.InstallError):
+                    install.install_entry()
+
+
+
 if __name__ == "__main__":
     unittest.main()
