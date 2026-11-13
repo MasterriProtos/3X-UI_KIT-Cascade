@@ -324,6 +324,36 @@ class EntryTests(unittest.TestCase):
                 entry.restore()
                 run.assert_not_called()
 
+    def test_entry_probe_requires_valid_route_and_uses_real_http_test(self):
+        with tempfile.TemporaryDirectory() as d:
+            state = Path(d) / "state.json"
+            state.write_text(json.dumps({"schema": 1, "role": "entry",
+                                         "status": "installed"}))
+            cfg = entry.merge_template(original(), NODE)
+            with mock.patch.object(entry, "STATE_FILE", state), \
+                 mock.patch.object(entry, "Panel") as fake:
+                fake.return_value.get_template.return_value = cfg
+                fake.return_value.test_outbound.return_value = {
+                    "mode": "real", "success": True, "delay": 42,
+                    "egress": {"ipv4": "203.0.113.1", "country": "DE"}
+                }
+                result = entry.probe_exit()
+                self.assertTrue(result["success"])
+                fake.return_value.test_outbound.assert_called_once_with(
+                    cfg["outbounds"][0]
+                )
+                fake.return_value.get_template.return_value = original()
+                with self.assertRaises(entry.EntryError):
+                    entry.probe_exit()
+
+    def test_entry_probe_rejects_partial_without_state(self):
+        with tempfile.TemporaryDirectory() as d:
+            with mock.patch.object(entry, "STATE_FILE", Path(d) / "missing.json"), \
+                 mock.patch.object(entry, "Panel") as fake:
+                with self.assertRaises(entry.EntryError):
+                    entry.probe_exit()
+                fake.assert_not_called()
+
     def test_duplicate_sni_prompts_again_instead_of_exiting(self):
         script = (Path(__file__).resolve().parents[2] / "scripts" / "3x-ui.sh"
                   ).read_text(encoding="utf-8")
