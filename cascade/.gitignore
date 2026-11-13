@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+*.pem
+*.key
+peer.json
+exit-config.json
+*.backup
+.env
