@@ -1,0 +1,81 @@
+name: Cascade v2 - Python and Xray validation
+
+on:
+  push:
+    branches: [multi-hop-v2]
+    paths:
+      - 'cascade_v2/**'
+      - '.github/workflows/cascade-v2.yml'
+  pull_request:
+    paths:
+      - 'cascade_v2/**'
+      - '.github/workflows/cascade-v2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline-tests:
+    name: Offline safety and parser tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile Python
+        run: python3 -m compileall -q cascade_v2
+      - name: Unit tests
+        run: python3 -m unittest discover -s cascade_v2/tests -v
+
+  xray-config-test:
+    name: Validate EXIT and RELAY JSON with Xray-core
+    runs-on: ubuntu-24.04
+    needs: offline-tests
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download pinned official Xray installer
+        run: |
+          curl -fsSL --retry 3             https://raw.githubusercontent.com/XTLS/Xray-install/1bce9c3a9630d72521643159080017d1c001bc71/install-release.sh             -o /tmp/install-release.sh
+      - name: Install Xray in disposable GitHub runner
+        run: sudo bash /tmp/install-release.sh install --manually-restart-later
+      - name: Validate generated real-key configs
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          import re
+          import subprocess
+          import sys
+          import tempfile
+          import uuid
+
+          sys.path.insert(0, "cascade_v2")
+          import hops
+
+          binary = "/usr/local/bin/xray"
+          output = subprocess.check_output([binary, "x25519"], text=True)
+          fields = {}
+          for row in output.splitlines():
+              if ":" in row:
+                  k, v = row.split(":", 1)
+                  fields[k.strip().lower().replace(" ", "")] = v.strip()
+          private = fields["privatekey"]
+          public = fields.get("password") or fields["publickey"]
+          node = {
+              "address": "2606:4700:4700::1111",
+              "port": 24443,
+              "serverName": "www.microsoft.com",
+              "privateKey": private,
+              "publicKey": public,
+              "shortId": "0123456789abcdef",
+              "id": str(uuid.uuid4()),
+          }
+          uri = hops.link(node)
+          assert hops.parse_link(uri)["address"] == node["address"]
+          with tempfile.TemporaryDirectory() as path:
+              for role in ("exit", "relay"):
+                  cfg = hops.node_config(role, node, uri if role == "relay" else None)
+                  filepath = Path(path) / (role + ".json")
+                  filepath.write_text(hops.format_plan(cfg))
+                  subprocess.run([binary, "run", "-test", "-config", str(filepath)], check=True)
+                  print("Validated", role)
+          PY
