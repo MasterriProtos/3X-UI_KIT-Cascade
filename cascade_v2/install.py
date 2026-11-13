@@ -456,7 +456,8 @@ def install_entry():
         raise InstallError("Не найдены скрипты оригинального KIT в checkout")
     if (Path("/usr/local/x-ui").exists() or
             Path("/etc/x-ui/install-result.env").exists() or
-            Path("/root/3x-ui.txt").exists()):
+            Path("/root/3x-ui.txt").exists() or
+            XRAY.exists() or XRAY_UNIT.exists() or STATE_FILE.exists()):
         raise InstallError(
             "ENTRY требует чистый сервер без 3X-UI/KIT. "
             "Автоматическое обновление существующей установки запрещено."
