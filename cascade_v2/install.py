@@ -192,7 +192,7 @@ def generate_keys():
             k, v = line.split(":", 1)
             fields[k.strip().lower().replace(" ", "")] = v.strip()
     private = fields.get("privatekey")
-    public = fields.get("password") or fields.get("publickey")
+    public = next((v for k, v in fields.items()\n                   if k.startswith("password") or k.startswith("publickey")), None)
     if not private or not public:
         raise InstallError("Xray не вернул ожидаемые PrivateKey и Password/PublicKey")
     return hops.check_key(private), hops.check_key(public)
