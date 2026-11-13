@@ -427,9 +427,11 @@ class EntryTests(unittest.TestCase):
         self.assertIn("mt_port=$(mt_public_port)", kit)
         self.assertIn("out=$(sed -E", kit)
         self.assertIn("port: $p", kit)
-        self.assertIn("proxy_protocol on;", helper)
         self.assertIn("trap 'rollback' ERR", helper)
-        self.assertIn("127.0.0.1:10445;", helper)
+        self.assertIn('mtproto_nginx.py" apply', helper)
+        nginx_parser = (Path(__file__).resolve().parents[2] / "scripts" / "mtproto_nginx.py").read_text()
+        self.assertIn("proxy_protocol on;", nginx_parser)
+        self.assertIn("127.0.0.1:10445;", nginx_parser)
         import subprocess
         for script in ("3x-ui.sh", "kit.sh", "mtproto-public-cascade.sh"):
             subprocess.run(
