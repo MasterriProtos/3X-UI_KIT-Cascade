@@ -5,6 +5,7 @@ set -Eeuo pipefail
 
 fail() { printf 'ОШИБКА: %s\n' "$*" >&2; exit 1; }
 [[ ${EUID:-$(id -u)} -eq 0 ]] || fail "Запустите от root"
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 conf=/etc/nginx/kit-stream.conf
 backup=/etc/nginx/kit-stream.conf.pre-mtproto-8445
 state=/etc/kit-cascade/entry/state.json
@@ -32,16 +33,7 @@ fi
 if ss -H -lnt '( sport = :8445 )' | grep -q .; then
   fail "TCP/8445 уже занят; не меняю nginx"
 fi
-python3 - "$conf" <<'PY' || fail "nginx не соответствует ожидаемому KIT stream config"
-from pathlib import Path
-import sys
-s = Path(sys.argv[1]).read_text()
-assert s.count("stream {") == 1
-assert "127.0.0.1:10445;" in s
-assert "ssl_preread on;" in s
-assert s.count("        listen 443;") == 1
-assert s.count("    server {\n        listen 443;") == 1
-PY
+python3 "$script_dir/mtproto_nginx.py" check "$conf" || fail "Не буду менять nginx: предварительная проверка не прошла"
 cp -p -- "$conf" "$backup"
 
 rollback() {
@@ -50,26 +42,7 @@ rollback() {
 }
 trap 'rollback' ERR
 
-python3 - "$conf" <<'PY'
-from pathlib import Path
-import sys
-p = Path(sys.argv[1])
-s = p.read_text()
-needle = "    server {\n        listen 443;"
-block = """    # KIT CASCADE MTProto direct 8445
-    server {
-        listen 8445;
-        listen [::]:8445;
-        proxy_pass 127.0.0.1:10445;
-        proxy_protocol on;
-        proxy_connect_timeout 10s;
-        proxy_timeout 1h;
-    }
-"""
-if s.count(needle) != 1:
-    raise SystemExit("Unexpected nginx structure; original kept in backup")
-p.write_text(s.replace(needle, block + needle, 1))
-PY
+python3 "$script_dir/mtproto_nginx.py" apply "$conf"
 nginx -t
 systemctl reload nginx
 sleep 1
