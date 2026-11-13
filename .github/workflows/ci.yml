@@ -28,7 +28,8 @@ jobs:
           grep -q "^KIT_VERSION=\"$v\"" scripts/3x-ui.sh
           grep -q "^KIT_VERSION=\"$v\"" scripts/hysteria2.sh
           grep -q "^KIT_VERSION=\"$v\"" scripts/kit.sh
-      - name: Подпись релиза совпадает с файлами
+      - name: Подпись релиза совпадает с файлами (только исходный main)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
           [ -f SHA256SUMS ] || { echo "SHA256SUMS нет – релиз ещё не подписан"; exit 0; }
           grep -qx "# 3X-UI KIT $(cat VERSION)" SHA256SUMS
