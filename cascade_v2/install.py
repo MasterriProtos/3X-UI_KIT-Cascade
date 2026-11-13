@@ -740,6 +740,7 @@ def main(argv=None):
     install_p.add_argument("--role", choices=["exit", "relay", "entry"])
     sub.add_parser("status", help="Показать состояние")
     sub.add_parser("entry-status", help="Проверить каскадную маршрутизацию ENTRY")
+    sub.add_parser("entry-probe", help="Проверить реальный HTTP-трафик через EXIT (IPv6)")
     sub.add_parser("resume-entry", help="Продолжить ENTRY после сбоя до создания клиентов")
     sub.add_parser("show-link", help="Показать секретную ссылку")
     sub.add_parser("restore", help="Восстановить конфиг и отключить Xray")
@@ -764,6 +765,8 @@ def main(argv=None):
             show_status()
         elif action == "entry-status":
             entry.status()
+        elif action == "entry-probe":
+            entry.probe_exit()
         elif action == "resume-entry":
             resume_entry()
         elif action == "show-link":
