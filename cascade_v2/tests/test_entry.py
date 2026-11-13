@@ -354,6 +354,68 @@ class EntryTests(unittest.TestCase):
                     entry.probe_exit()
                 fake.assert_not_called()
 
+    def test_mtproto_bridge_config_is_root_db_read_only(self):
+        with tempfile.TemporaryDirectory() as d:
+            dbfile = Path(d) / "x-ui.db"
+            with sqlite3.connect(dbfile) as db:
+                db.execute("""CREATE TABLE inbounds (
+                    protocol TEXT, enable INTEGER, node_id INTEGER, settings TEXT
+                )""")
+                db.execute("INSERT INTO inbounds VALUES (?, ?, ?, ?)", (
+                    "mtproto", 1, None, json.dumps({
+                        "routeThroughXray": True, "outboundTag": "to-next-hop",
+                        "routeXrayPort": 28651, "clients": [{"secret": "never_print"}]
+                    })
+                ))
+                db.commit()
+            with mock.patch.object(entry, "DB_FILE", dbfile):
+                self.assertEqual(entry._read_mtproto_bridge(), 28651)
+                with sqlite3.connect(dbfile) as db:
+                    db.execute("UPDATE inbounds SET settings = ?",
+                               (json.dumps({"routeThroughXray": False,
+                                            "routeXrayPort": 28651}),))
+                    db.commit()
+                with self.assertRaisesRegex(entry.EntryError, "не настроен"):
+                    entry._read_mtproto_bridge()
+
+    def test_mtproto_socks5_connect_uses_binary_handshake(self):
+        from unittest.mock import MagicMock
+        fake = MagicMock()
+        fake.__enter__.return_value = fake
+        fake.recv.side_effect = [
+            b"\x05\x00", b"\x05\x00\x00\x01", b"\x7f\x00\x00\x01\x00\x50"
+        ]
+        with mock.patch.object(entry.socket, "create_connection", return_value=fake) as conn:
+            self.assertTrue(entry.socks_connect_via_bridge(
+                34567, "149.154.167.51"
+            ))
+            conn.assert_called_once_with(("127.0.0.1", 34567), timeout=7)
+            sent = [call.args[0] for call in fake.sendall.call_args_list]
+            self.assertEqual(sent[0], b"\x05\x01\x00")
+            self.assertEqual(sent[1], b"\x05\x01\x00\x01"
+                             + entry.socket.inet_aton("149.154.167.51")
+                             + b"\x01\xbb")
+
+    def test_mtproto_socks5_rejects_proxy_failure(self):
+        from unittest.mock import MagicMock
+        fake = MagicMock()
+        fake.__enter__.return_value = fake
+        fake.recv.side_effect = [b"\x05\x00", b"\x05\x05\x00\x01"]
+        with mock.patch.object(entry.socket, "create_connection", return_value=fake):
+            with self.assertRaisesRegex(entry.EntryError, "код ответа 5"):
+                entry.socks_connect_via_bridge(34567, "149.154.167.51")
+
+    def test_mtproto_probe_requires_installed_state(self):
+        with tempfile.TemporaryDirectory() as d:
+            state = Path(d) / "state.json"
+            state.write_text(json.dumps({"schema": 1, "role": "entry",
+                                         "status": "restored-disabled"}))
+            with mock.patch.object(entry, "STATE_FILE", state), \
+                 mock.patch.object(entry, "Panel") as panel:
+                with self.assertRaises(entry.EntryError):
+                    entry.probe_mtproto()
+                panel.assert_not_called()
+
     def test_duplicate_sni_prompts_again_instead_of_exiting(self):
         script = (Path(__file__).resolve().parents[2] / "scripts" / "3x-ui.sh"
                   ).read_text(encoding="utf-8")
