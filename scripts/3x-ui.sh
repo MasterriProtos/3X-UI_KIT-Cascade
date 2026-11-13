@@ -699,6 +699,20 @@ main() {
   elif [[ -z $SNI && $yes == no && $PANEL_SSL == ip && $multi == no && -t 1 ]] && { : </dev/tty; } 2>/dev/null; then
     choose_masking
   fi
+  # Even without a public TLS cert for the panel, allow explicit REALITY SNI.
+  # Otherwise the upstream KIT automatically chooses a target silently.
+  if [[ -n ${KIT_CASCADE_NEXT_LINK_FILE:-} && -z $SNI && -z $DOMAIN &&
+        $PANEL_SSL != ip && $yes == no && -t 1 ]]; then
+    ask_tty "Сайт маскировки REALITY (Enter — подобрать автоматически): " \
+      || die "Нет терминала для выбора маскировки REALITY"
+    local cascade_custom_sni=${REPLY,,}
+    cascade_custom_sni=${cascade_custom_sni%.}
+    if [[ -n $cascade_custom_sni ]]; then
+      [[ $cascade_custom_sni =~ $re_host ]] && sni_ok "$cascade_custom_sni" \
+        || die "$cascade_custom_sni не прошёл проверку TLS 1.3/h2"
+      SNI=$cascade_custom_sni
+    fi
+  fi
   if [[ -n $DOMAIN ]]; then
     SNI=$DOMAIN
   elif [[ -z $SNI ]]; then
@@ -1458,7 +1472,11 @@ proto_mtproto() {
   # mtg is separate from Xray; force Telegram through the local
   # Xray SOCKS bridge injected by 3X-UI v3.9.0.
   if [[ -n ${KIT_CASCADE_NEXT_LINK_FILE:-} ]]; then
-    cascade_mtg='{"routeThroughXray":true,"routeXrayPort":18181,"outboundTag":"to-next-hop"}'
+    # Reserve a random free loopback SOCKS port for this mtg instance.
+    local mtproto_socks_port
+    mtproto_socks_port=$(free_port)
+    cascade_mtg=$(jq -nc --argjson port "$mtproto_socks_port" \
+      '{routeThroughXray:true, routeXrayPort:$port, outboundTag:"to-next-hop"}')
   fi
   if [[ $SINGLE == yes ]]; then
     # FakeTLS-домен – свой сайт: nginx узнаёт MTProto по нему и передаёт mtg с реальным IP клиента.
