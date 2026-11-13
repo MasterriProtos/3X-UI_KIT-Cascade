@@ -181,7 +181,9 @@ class EntryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             existing = Path(folder) / "xray"
             existing.write_bytes(b"already installed")
-            with mock.patch.object(install, "XRAY", existing):
+            with mock.patch.object(install, "XRAY", existing), \
+                 mock.patch.object(install.Path, "exists",
+                                   lambda path: str(path) == str(existing)):
                 with self.assertRaises(install.InstallError):
                     install.install_entry()
 
