@@ -1797,6 +1797,19 @@ setup_nginx() {
     echo "        proxy_connect_timeout 10s;"
     echo "        proxy_timeout 1h;"
     echo "    }"
+    if [[ -n ${KIT_CASCADE_NEXT_LINK_FILE:-} && -n $mt_sni ]]; then
+      # Telegram may omit SNI in FakeTLS. Keep 443 for other protocols and
+      # expose a separate TCP port routed directly to the existing mtg sidecar.
+      echo "    # KIT CASCADE MTProto direct 8445"
+      echo "    server {"
+      echo "        listen ${PORTS[mtproto]};"
+      echo "        listen [::]:${PORTS[mtproto]};"
+      echo "        proxy_pass 127.0.0.1:${INNER[mtproto]};"
+      echo "        proxy_protocol on;"
+      echo "        proxy_connect_timeout 10s;"
+      echo "        proxy_timeout 1h;"
+      echo "    }"
+    fi
     echo "}"
   } >/etc/nginx/kit-stream.conf
   cat >/etc/nginx/conf.d/kit.conf <<NGX
@@ -1870,6 +1883,7 @@ NGX
   # Let's Encrypt на IP продлевается каждые несколько дней – nginx раз в сутки перечитывает сертификат.
   echo '17 4 * * * root systemctl reload nginx >/dev/null 2>&1' >/etc/cron.d/kit-nginx-reload
   OPEN+=("443/tcp")
+  [[ -n ${KIT_CASCADE_NEXT_LINK_FILE:-} && -n $mt_sni ]] && OPEN+=("${PORTS[mtproto]}/tcp")
   local i
   for i in $(seq 1 10); do port_busy 443 tcp && return 0; sleep 1; done
   die "nginx не открыл порт 443."
