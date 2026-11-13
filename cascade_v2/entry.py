@@ -423,15 +423,15 @@ def socks_connect_via_bridge(port, host, target_port=443, timeout=7):
 
     with socket.create_connection(("127.0.0.1", port), timeout=timeout) as sock:
         sock.settimeout(timeout)
-        sock.sendall(b"\\x05\\x01\\x00")
-        if recv_exact(sock, 2) != b"\\x05\\x00":
+        sock.sendall(b"\x05\x01\x00")
+        if recv_exact(sock, 2) != b"\x05\x00":
             raise EntryError("Локальный мост не принял SOCKS5 без аутентификации")
         sock.sendall(
-            b"\\x05\\x01\\x00\\x01" + socket.inet_aton(host)
+            b"\x05\x01\x00\x01" + socket.inet_aton(host)
             + struct.pack("!H", target_port)
         )
         response = recv_exact(sock, 4)
-        if response[:2] != b"\\x05\\x00":
+        if response[:2] != b"\x05\x00":
             code = response[1] if response[0] == 5 else -1
             raise EntryError("SOCKS5-мост не смог подключиться к Telegram "
                              "(код ответа " + str(code) + ")")
