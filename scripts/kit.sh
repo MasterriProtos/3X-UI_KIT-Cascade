@@ -14,6 +14,15 @@ export LC_ALL=C.UTF-8  # ширина колонок по символам, а �
 
 KIT_VERSION="1.2.1"
 KIT_RAW="https://raw.githubusercontent.com/itsnotkubrick/3X-UI_KIT/main"
+if [[ -f /etc/kit-cascade/entry/state.json ]]; then
+  # Keep helper downloads within this fork; don't silently revert to upstream.
+  KIT_RAW="https://raw.githubusercontent.com/MasterriProtos/3X-UI_KIT-Cascade/multi-hop-v2"
+  if [[ ${1:-} == update ]]; then
+    echo "KIT-Cascade alpha: обновление через 'kit update' отключено: upstream не знает о каскадных маршрутах." >&2
+    echo "Сначала обновите форк multi-hop-v2 и проверьте совместимость Xray/3X-UI." >&2
+    exit 2
+  fi
+fi
 # Файлы новой версии берём из её тега, а не из меняющейся ветки main.
 kit_ref_raw() { echo "https://raw.githubusercontent.com/itsnotkubrick/3X-UI_KIT/v$1"; }
 
