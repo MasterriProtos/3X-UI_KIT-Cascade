@@ -106,7 +106,7 @@ class InstallerTests(unittest.TestCase):
                     install.ensure_clean()
 
     def test_key_parser_accepts_current_xray_output(self):
-        example = "PrivateKey: " + KEY + "\nPassword: " + KEY + "\nHash32: abc\n"
+        example = "PrivateKey: " + KEY + "\nPassword (PublicKey): " + KEY + "\nHash32: abc\n"
         with mock.patch.object(install, "run", return_value=subprocess.CompletedProcess(
                 [], 0, stdout=example)):
             private, public = install.generate_keys()
