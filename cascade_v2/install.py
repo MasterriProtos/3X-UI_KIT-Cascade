@@ -459,19 +459,38 @@ def install_entry():
     if (Path("/usr/local/x-ui").exists() or
             Path("/etc/x-ui/install-result.env").exists() or
             Path("/root/3x-ui.txt").exists() or
+            Path("/etc/x-ui/x-ui.db").exists() or
+            Path("/usr/local/bin/kit").exists() or
+            Path("/etc/nginx/kit-stream.conf").exists() or
             XRAY.exists() or XRAY_UNIT.exists() or STATE_FILE.exists()):
         raise InstallError(
             "ENTRY требует чистый сервер без 3X-UI/KIT. "
             "Автоматическое обновление существующей установки запрещено."
         )
-    if entry.STATE_FILE.exists() or entry.PEER_FILE.exists():
+    if entry.STATE_FILE.exists():
         raise InstallError(
-            "Найдены следы предыдущей установки ENTRY. Повторное применение "
-            "поверх частично настроенной панели небезопасно. См. entry-status."
+            "ENTRY уже настраивался после установки панели. Автоматическое "
+            "повторное применение поверх частичной установки запрещено. "
+            "Проверьте: python3 cascade_v2/install.py entry-status"
         )
-    uri = getpass.getpass(
-        "\nВставьте VLESS-ссылку EXIT (ввод скрыт, Enter по окончании): "
-    ).strip()
+    if entry.PEER_FILE.exists():
+        # A previous run may have stopped during protocol/SNI questions,
+        # before package and Xray installation. Reuse only the exact same
+        # root-only link, and only after the clean-server guard above.
+        try:
+            entry.load_link(entry.PEER_FILE)
+        except (entry.EntryError, hops.ChainError) as exc:
+            raise InstallError("Сохранённая ссылка EXIT повреждена: " + str(exc)) from exc
+        print("\nОбнаружена ранняя прерванная попытка ENTRY.")
+        print("3X-UI/Xray не установлены; сохранённую ссылку EXIT можно использовать снова.")
+        if not confirm("Продолжить с сохранённой ссылкой?", "ПРОДОЛЖИТЬ ENTRY"):
+            print("Отменено. Настройки и ссылка сохранены.")
+            return
+        uri = entry.PEER_FILE.read_text(encoding="utf-8").strip()
+    else:
+        uri = getpass.getpass(
+            "\nВставьте VLESS-ссылку EXIT (ввод скрыт, Enter по окончании): "
+        ).strip()
     try:
         peer = hops.parse_link(uri)
         entry.check_exit_connectivity(peer)
