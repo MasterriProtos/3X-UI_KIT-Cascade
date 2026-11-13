@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import socket
 import socketserver
@@ -15,8 +16,10 @@ import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import hops
+import entry
 
 XRAY = "/usr/local/bin/xray"
+ENTRY_XRAY = os.getenv("CASCADE_ENTRY_XRAY", XRAY)
 PUBLIC_SAMPLE = "2606:4700:4700::1111"
 
 
@@ -103,7 +106,7 @@ def main():
     relay_cfg = hops.node_config("relay", relay_node, hops.link(exit_node))
     relay_cfg["inbounds"][0]["listen"] = "::1"
     relay_cfg["outbounds"][0]["settings"]["address"] = "::1"
-    entry_outbound = hops.outbound(hops.parse_link(hops.link(relay_node)))
+    entry_outbound = entry.outbound_to_exit(hops.parse_link(hops.link(relay_node)))
     entry_outbound["settings"]["address"] = "::1"
     entry_cfg = {
         "log": {"loglevel": "warning"},
@@ -131,10 +134,11 @@ def main():
                 config = Path(temp) / f"{name}.json"
                 cfg["log"]["loglevel"] = "debug"  # only in disposable CI
                 config.write_text(hops.format_plan(cfg))
-                subprocess.run([XRAY, "run", "-test", "-config", str(config)], check=True)
+                binary = ENTRY_XRAY if name == "entry" else XRAY
+                subprocess.run([binary, "run", "-test", "-config", str(config)], check=True)
                 logs = open(Path(temp) / f"{name}.log", "w", encoding="utf-8")
                 streams.append(logs)
-                proc = subprocess.Popen([XRAY, "run", "-config", str(config)],
+                proc = subprocess.Popen([binary, "run", "-config", str(config)],
                                         stdout=logs, stderr=logs)
                 processes.append(proc)
                 time.sleep(0.5)
