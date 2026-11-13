@@ -438,7 +438,7 @@ class EntryTests(unittest.TestCase):
             )
         # Telegram's query port is remapped; VLESS URLs must remain unchanged.
         command = r'sed -E "/^tg:\/\/proxy\?/s/([?&]port=)[0-9]+/\\18445/"'
-        sample = "tg://proxy?server=example.com&port=443&secret=eeabcd\\nvless://uuid@example.com:443?security=reality\\n"
+        sample = "tg://proxy?server=example.com&port=443&secret=eeabcd\nvless://uuid@example.com:443?security=reality\n"
         result = subprocess.run(
             ["bash", "-c", command], input=sample, text=True,
             capture_output=True, check=True,
