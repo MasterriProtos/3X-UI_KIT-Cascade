@@ -139,7 +139,7 @@ class EntryTests(unittest.TestCase):
             with mock.patch.multiple(
                 entry, BACKUP=backup, DB_FILE=db,
                 STATE_DIR=folder, STATE_FILE=state
-            ), mock.patch("builtins.input", return_value="ОТКАТ"), \
+            ), mock.patch("builtins.input", return_value="y"), \
                 mock.patch.object(entry.subprocess, "run", side_effect=fake_run):
                 entry.restore()
                 self.assertEqual(calls[0], ["systemctl", "stop", "x-ui"])
@@ -289,6 +289,19 @@ class EntryTests(unittest.TestCase):
                 install.install_entry()
                 self.assertTrue(linkfile.is_file())
                 hidden.assert_not_called()
+
+    def test_entry_rollback_no_does_not_stop_panel(self):
+        with tempfile.TemporaryDirectory() as d:
+            folder = Path(d)
+            backup = folder / "original.json"
+            db = folder / "x-ui.db"
+            backup.write_text("{}")
+            db.write_text("")
+            with mock.patch.multiple(entry, BACKUP=backup, DB_FILE=db), \
+                 mock.patch("builtins.input", return_value="n"), \
+                 mock.patch.object(entry.subprocess, "run") as run:
+                entry.restore()
+                run.assert_not_called()
 
     def test_duplicate_sni_prompts_again_instead_of_exiting(self):
         script = (Path(__file__).resolve().parents[2] / "scripts" / "3x-ui.sh"
