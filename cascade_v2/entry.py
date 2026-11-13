@@ -18,6 +18,7 @@ import shutil
 import subprocess
 import shlex
 import socket
+import struct
 import ssl
 import sys
 import tempfile
@@ -367,6 +368,115 @@ def probe_exit():
     return result
 
 
+
+def _read_mtproto_bridge():
+    """Inspect local 3X-UI SQLite in read-only mode. Never read or print client secrets."""
+    if not DB_FILE.is_file():
+        raise EntryError("Не найдена локальная база 3X-UI x-ui.db")
+    try:
+        with sqlite3.connect(DB_FILE.resolve().as_uri() + "?mode=ro", uri=True,
+                             timeout=5) as db:
+            rows = db.execute(
+                "SELECT settings FROM inbounds "
+                "WHERE protocol = ? AND enable = 1 AND node_id IS NULL",
+                ("mtproto",),
+            ).fetchall()
+    except sqlite3.Error as exc:
+        raise EntryError("Не удалось прочитать конфигурацию MTProto из 3X-UI") from exc
+    if len(rows) != 1:
+        raise EntryError(
+            "Ожидалось одно локальное активное подключение MTProto; найдено: "
+            + str(len(rows))
+        )
+    try:
+        data = json.loads(rows[0][0])
+    except (TypeError, ValueError) as exc:
+        raise EntryError("В базе панели повреждены настройки MTProto") from exc
+    if not isinstance(data, dict):
+        raise EntryError("Некорректные настройки MTProto")
+    if (data.get("routeThroughXray") is not True
+            or data.get("outboundTag") != OUTBOUND_TAG):
+        raise EntryError(
+            "MTProto не настроен на to-next-hop через Xray. "
+            "Не пытайтесь исправлять это прямым выходом через ENTRY."
+        )
+    port = data.get("routeXrayPort")
+    if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
+        raise EntryError("У MTProto отсутствует корректный routeXrayPort")
+    return port
+
+
+def socks_connect_via_bridge(port, host, target_port=443, timeout=7):
+    """TCP CONNECT to a known Telegram IPv4 through the installed local SOCKS5.
+
+    No client keys, files, or Xray settings touched. SOCKS success verifies
+    a real TCP route through the local bridge; not Telegram authentication.
+    """
+    def recv_exact(sock, size):
+        data = b""
+        while len(data) < size:
+            chunk = sock.recv(size - len(data))
+            if not chunk:
+                raise EntryError("SOCKS5-мост закрыл соединение")
+            data += chunk
+        return data
+
+    with socket.create_connection(("127.0.0.1", port), timeout=timeout) as sock:
+        sock.settimeout(timeout)
+        sock.sendall(b"\\x05\\x01\\x00")
+        if recv_exact(sock, 2) != b"\\x05\\x00":
+            raise EntryError("Локальный мост не принял SOCKS5 без аутентификации")
+        sock.sendall(
+            b"\\x05\\x01\\x00\\x01" + socket.inet_aton(host)
+            + struct.pack("!H", target_port)
+        )
+        response = recv_exact(sock, 4)
+        if response[:2] != b"\\x05\\x00":
+            code = response[1] if response[0] == 5 else -1
+            raise EntryError("SOCKS5-мост не смог подключиться к Telegram "
+                             "(код ответа " + str(code) + ")")
+        atyp = response[3]
+        if atyp == 1:
+            recv_exact(sock, 4 + 2)
+        elif atyp == 4:
+            recv_exact(sock, 16 + 2)
+        elif atyp == 3:
+            n = recv_exact(sock, 1)[0]
+            recv_exact(sock, n + 2)
+        else:
+            raise EntryError("SOCKS5-мост вернул неизвестный тип адреса")
+    return True
+
+
+def probe_mtproto():
+    """Check MTProto -> loopback SOCKS bridge -> Xray -> EXIT -> Telegram."""
+    if not STATE_FILE.is_file():
+        raise EntryError("ENTRY ещё не настроен")
+    status = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+    if status.get("role") != "entry" or status.get("status") != "installed":
+        raise EntryError("Диагностика MTProto требует установленный ENTRY")
+    cfg = Panel().get_template()
+    assert_cascade_template(cfg)
+    port = _read_mtproto_bridge()
+    print("MTProto: routeThroughXray включён, выходной тег to-next-hop.")
+    print("Порт SOCKS5-моста:", port, "(только 127.0.0.1)")
+    targets = ("149.154.167.51", "149.154.175.50", "91.108.56.130")
+    failures = []
+    for host in targets:
+        try:
+            socks_connect_via_bridge(port, host)
+        except (OSError, EntryError) as exc:
+            failures.append(f"{host}: {exc}")
+            continue
+        print("УСПЕШНО: TCP/443 Telegram доступен через локальный SOCKS5-мост.")
+        print("Проверено: мост Xray; Telegram-клиент и MTProto-секрет отдельно не проверялись.")
+        return True
+    raise EntryError(
+        "Ни один Telegram TCP/443 адрес не доступен через SOCKS5-мост. "
+        "Результаты: " + "; ".join(failures)
+    )
+
+
 def restore():
     """Fail-closed: stop and disable panel, then update its *offline* SQLite DB.
 
@@ -428,6 +538,7 @@ def main(argv=None):
     sub.add_parser("finish")
     sub.add_parser("status")
     sub.add_parser("probe")
+    sub.add_parser("mtproto-probe")
     sub.add_parser("restore")
     a = parser.parse_args(argv)
     try:
@@ -441,6 +552,8 @@ def main(argv=None):
             status()
         elif a.command == "probe":
             probe_exit()
+        elif a.command == "mtproto-probe":
+            probe_mtproto()
         elif a.command == "restore":
             restore()
     except (EntryError, hops.ChainError, OSError, KeyError, TypeError, ValueError) as exc:
