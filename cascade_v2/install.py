@@ -593,7 +593,7 @@ def main(argv=None):
         elif action == "entry-restore":
             entry.restore()
         return 0
-    except (InstallError, hops.ChainError, OSError, ValueError, KeyError) as exc:
+    except (InstallError, entry.EntryError, hops.ChainError, OSError, ValueError, KeyError) as exc:
         print("ОШИБКА:", exc, file=sys.stderr)
         return 1
 
