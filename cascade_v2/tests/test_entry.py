@@ -219,25 +219,76 @@ class EntryTests(unittest.TestCase):
 
 
 
-    def test_early_sni_failure_can_retry_with_saved_link(self):
+    def test_early_sni_failure_discards_saved_link_and_reasks_all(self):
         with tempfile.TemporaryDirectory() as d:
-            linkfile = Path(d) / "next-hop.txt"
+            directory = Path(d) / "entry"
+            directory.mkdir()
+            linkfile = directory / "next-hop.txt"
             linkfile.write_text(hops.link(NODE))
             linkfile.chmod(0o600)
-            statefile = Path(d) / "state.json"
-            # Fake clean VPS: only the preserved private VLESS link exists.
-            with mock.patch.object(entry, "PEER_FILE", linkfile), \
+            statefile = directory / "state.json"
+            # Mock clean host while keeping the test's filesystem real.
+            with mock.patch.object(entry, "STATE_DIR", directory), \
+                 mock.patch.object(entry, "PEER_FILE", linkfile), \
                  mock.patch.object(entry, "STATE_FILE", statefile), \
                  mock.patch.object(install.Path, "exists",
-                                   lambda p: str(p) == str(linkfile)), \
+                     lambda p: str(p) in {str(directory), str(linkfile)}), \
                  mock.patch.object(entry, "check_exit_connectivity"), \
-                 mock.patch.object(install, "confirm", side_effect=[True, False]) as confirms, \
-                 mock.patch.object(install.getpass, "getpass") as hidden:
+                 mock.patch.object(install, "confirm",
+                                   side_effect=[True, False]) as confirms, \
+                 mock.patch.object(install.getpass, "getpass",
+                                   return_value=hops.link(NODE)) as hidden:
                 install.install_entry()
                 self.assertEqual(confirms.call_count, 2)
-                hidden.assert_not_called()
+                hidden.assert_called_once()
+                self.assertFalse(linkfile.is_file())
+                self.assertFalse(directory.is_dir())
+
+    def test_entry_reset_refuses_unknown_or_backup_files(self):
+        with tempfile.TemporaryDirectory() as d:
+            directory = Path(d) / "entry"
+            directory.mkdir()
+            linkfile = directory / "next-hop.txt"
+            linkfile.write_text(hops.link(NODE))
+            other = directory / "xray-template-before.json"
+            other.write_text("{}")
+            with mock.patch.object(entry, "STATE_DIR", directory), \
+                 mock.patch.object(entry, "PEER_FILE", linkfile):
+                with self.assertRaises(install.InstallError):
+                    install.clear_early_entry_data()
                 self.assertTrue(linkfile.is_file())
-                self.assertEqual(hops.parse_link(linkfile.read_text())["address"], NODE["address"])
+                self.assertTrue(other.is_file())
+
+    def test_entry_reset_refuses_symlinks(self):
+        with tempfile.TemporaryDirectory() as d:
+            directory = Path(d) / "entry"
+            directory.mkdir()
+            target = Path(d) / "real-link"
+            target.write_text("protected")
+            linkfile = directory / "next-hop.txt"
+            linkfile.symlink_to(target)
+            with mock.patch.object(entry, "STATE_DIR", directory), \
+                 mock.patch.object(entry, "PEER_FILE", linkfile):
+                with self.assertRaises(install.InstallError):
+                    install.clear_early_entry_data()
+                self.assertEqual(target.read_text(), "protected")
+
+    def test_entry_reset_cancellation_keeps_credentials(self):
+        with tempfile.TemporaryDirectory() as d:
+            directory = Path(d) / "entry"
+            directory.mkdir()
+            linkfile = directory / "next-hop.txt"
+            linkfile.write_text(hops.link(NODE))
+            with mock.patch.object(entry, "STATE_DIR", directory), \
+                 mock.patch.object(entry, "PEER_FILE", linkfile), \
+                 mock.patch.object(entry, "STATE_FILE", directory / "state.json"), \
+                 mock.patch.object(install.Path, "exists",
+                     lambda p: str(p) in {str(directory), str(linkfile)}), \
+                 mock.patch.object(install, "confirm", return_value=False), \
+                 mock.patch.object(install.getpass, "getpass") as hidden:
+                install.install_entry()
+                self.assertTrue(linkfile.is_file())
+                hidden.assert_not_called()
 
     def test_duplicate_sni_prompts_again_instead_of_exiting(self):
         script = (Path(__file__).resolve().parents[2] / "scripts" / "3x-ui.sh"
