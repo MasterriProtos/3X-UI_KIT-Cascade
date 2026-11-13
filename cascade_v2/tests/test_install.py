@@ -113,5 +113,34 @@ class InstallerTests(unittest.TestCase):
             self.assertEqual((private, public), (KEY, KEY))
 
 
+    def test_rollback_restores_backup_and_removes_active_state(self):
+        with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder)
+            config = folder / "config.json"
+            backup = folder / "old.json"
+            state = folder / "state.json"
+            link = folder / "link.txt"
+            backup.write_text("{}")
+            config.write_text('{"outbounds":[{"protocol":"freedom"}]}')
+            state.write_text('{"role":"exit"}')
+            link.write_text("vless://secret")
+            with mock.patch.multiple(
+                install, CONFIG_FILE=config, STATE_FILE=state,
+                LINK_FILE=link,
+            ), mock.patch.object(install, "run") as runner, \
+                 mock.patch.object(install.grp, "getgrnam") as group, \
+                 mock.patch.object(install.os, "chown") as change_owner:
+                group.return_value.gr_gid = 0
+                install.rollback_config(backup)
+                self.assertEqual(config.read_text(), "{}")
+                self.assertFalse(state.exists())
+                self.assertFalse(link.exists())
+                self.assertEqual(runner.call_count, 2)
+                self.assertEqual(runner.call_args_list[0].args[0],
+                                 ["systemctl", "stop", "xray"])
+                self.assertEqual(runner.call_args_list[1].args[0],
+                                 ["systemctl", "disable", "xray"])
+
+
 if __name__ == "__main__":
     unittest.main()
