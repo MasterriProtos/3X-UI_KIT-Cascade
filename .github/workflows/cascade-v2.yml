@@ -81,3 +81,5 @@ jobs:
                   subprocess.run([binary, "run", "-test", "-config", str(filepath)], check=True)
                   print("Validated", role)
           PY
+      - name: End-to-end two-hop REALITY transport test
+        run: python3 cascade_v2/tests/live_hops.py
