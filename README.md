@@ -1,3 +1,7 @@
+> **Разработка KIT-Cascade 2.0 (ветка `multi-hop-v2`):** интерактивный установщик EXIT/RELAY для чистой Ubuntu 24.04 находится в [инструкции](cascade_v2/README.md). Код пока в draft PR и не предназначен для замены уже работающего KIT. Роль ENTRY будет добавлена отдельно.
+
+---
+
 <div align="center">
 
 <img alt="3X-UI KIT" src="manuals/assets/banner.svg" width="820">
