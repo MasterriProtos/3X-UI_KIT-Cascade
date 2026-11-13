@@ -17,6 +17,7 @@ import os
 from pathlib import Path
 import re
 import secrets
+import sqlite3
 import shutil
 import socket
 import ssl
@@ -592,10 +593,14 @@ def install_entry():
         print("Отменено без изменений.")
         return
     entry.secure_write(entry.PEER_FILE, uri + "\n")
+    run_entry_kit_script(root, script)
+
+
+def run_entry_kit_script(root, script):
+    """Run the bundled KIT installer. The EXIT credential is a root-only file."""
     env = os.environ.copy()
     env["KIT_CASCADE_NEXT_LINK_FILE"] = str(entry.PEER_FILE)
-    # Do not pass secrets by command line or environment; only the file path.
-    print("\nЗапускаю установщик KIT из текущей ветки multi-hop-v2...")
+    print("\nЗапускаю мастер KIT с маршрутизацией к EXIT...")
     try:
         subprocess.run(
             ["bash", str(script), "--no-ufw"],
@@ -604,20 +609,93 @@ def install_entry():
         )
     except (subprocess.CalledProcessError, OSError) as exc:
         print(
-            "ОШИБКА: штатный KIT не завершился. "
-            "Существующие Xray-маршруты не возвращаются к direct автоматически.",
+            "ОШИБКА: KIT не завершён. Каскадный маршрут не заменяется "
+            "прямым автоматически. Не запускайте оригинальный KIT отдельно.",
             file=sys.stderr,
         )
-        print(
-            "Проверьте journalctl -u x-ui -n 80 и "
-            "python3 cascade_v2/entry.py status. "
-            "Не запускайте старый установщик поверх частичной установки.",
-            file=sys.stderr,
-        )
-        raise InstallError(f"ENTRY неполная: {exc}") from exc
+        raise InstallError(
+            f"ENTRY неполная: {exc}. Проверьте x-ui и состояние панели."
+        ) from exc
     entry.mark_complete()
-    print("\nENTRY установлен. Все клиентские TCP/UDP маршрутизируются через EXIT.")
-    print("Проверить: python3 cascade_v2/install.py entry-status")
+    print("\nENTRY установлен. Проверьте: python3 cascade_v2/install.py entry-status")
+
+
+def inspect_entry_resume():
+    """No mutation: allow resume only after panel/core setup, before clients."""
+    root = Path(__file__).resolve().parents[1]
+    script = root / "scripts" / "3x-ui.sh"
+    if not script.is_file() or not (root / "scripts" / "kit.sh").is_file():
+        raise InstallError("Нужен полный checkout multi-hop-v2")
+    if (STATE_FILE.exists() or XRAY_UNIT.exists() or XRAY.exists()
+            or entry.STATE_FILE.exists()):
+        raise InstallError(
+            "Обнаружены другие роли/состояния Xray. "
+            "Автоматическое продолжение запрещено."
+        )
+    if (Path("/root/3x-ui.txt").exists() or
+            Path("/usr/local/bin/kit").exists()):
+        raise InstallError(
+            "KIT уже завершил установку либо изменён вручную. "
+            "Автоматическое продолжение запрещено."
+        )
+    panel_binary = Path("/usr/local/x-ui/x-ui")
+    if not panel_binary.is_file() or not entry.ENV_FILE.is_file():
+        raise InstallError(
+            "Панель 3X-UI ещё не установлена. "
+            "Используйте install --role entry для чистого сервера."
+        )
+    if (entry.STATE_DIR.is_symlink()
+            or not entry.STATE_DIR.is_dir()
+            or entry.PEER_FILE.is_symlink()):
+        raise InstallError("Небезопасный путь к данным ENTRY")
+    paths = {p.name for p in entry.STATE_DIR.iterdir()}
+    if paths != {entry.PEER_FILE.name}:
+        raise InstallError(
+            "Найдены дополнительные данные или резервные копии ENTRY. "
+            "Автоматическое продолжение запрещено."
+        )
+    peer = entry.load_link(entry.PEER_FILE)
+    if not entry.DB_FILE.is_file():
+        raise InstallError("Не найдена база панели /etc/x-ui/x-ui.db")
+    try:
+        with sqlite3.connect(
+                "file:" + str(entry.DB_FILE) + "?mode=ro", uri=True
+        ) as conn:
+            count = conn.execute("SELECT COUNT(*) FROM inbounds").fetchone()[0]
+    except sqlite3.Error as exc:
+        raise InstallError("Не удалось безопасно проверить inbounds 3X-UI") from exc
+    if count != 0:
+        raise InstallError(
+            f"У панели уже {count} пользовательских inbounds. "
+            "Автоматическое продолжение может обойти защиту, поэтому запрещено."
+        )
+    panel = entry.Panel()
+    cfg = panel.get_template()
+    if any(o.get("tag") == entry.OUTBOUND_TAG
+           for o in cfg.get("outbounds", [])):
+        raise InstallError(
+            "Outbound to-next-hop уже есть, а состояние ENTRY отсутствует. "
+            "Нужна ручная диагностика, чтобы не повредить действующий маршрут."
+        )
+    entry.check_exit_connectivity(peer)
+    return root, script, peer
+
+
+def resume_entry():
+    """Resume only the known v2 partial state: panel installed, no client inbounds."""
+    root, script, peer = inspect_entry_resume()
+    print("\nОбнаружена незавершённая установка ENTRY:")
+    print(" • 3X-UI и ядро уже установлены — повторно их не разворачиваем;")
+    print(" • клиентских inbounds ещё нет;");
+    print(" • ссылка EXIT сохранена с правами только для root;")
+    print(" • outbound и клиентские подключения ещё не созданы;")
+    print(" • мастер снова спросит протоколы и сайты маскировки.")
+    print("EXIT:", f'[{peer["address"]}]:{peer["port"]}')
+    if not confirm("Продолжить настройку KIT на этой панели?"):
+        print("Отменено без изменений.")
+        return
+    run_entry_kit_script(root, script)
+
 
 
 def show_status():
@@ -661,6 +739,7 @@ def main(argv=None):
     install_p.add_argument("--role", choices=["exit", "relay", "entry"])
     sub.add_parser("status", help="Показать состояние")
     sub.add_parser("entry-status", help="Проверить каскадную маршрутизацию ENTRY")
+    sub.add_parser("resume-entry", help="Продолжить ENTRY после сбоя до создания клиентов")
     sub.add_parser("show-link", help="Показать секретную ссылку")
     sub.add_parser("restore", help="Восстановить конфиг и отключить Xray")
     sub.add_parser("entry-restore", help="Безопасно остановить ENTRY и откатить маршруты")
@@ -684,6 +763,8 @@ def main(argv=None):
             show_status()
         elif action == "entry-status":
             entry.status()
+        elif action == "resume-entry":
+            resume_entry()
         elif action == "show-link":
             if not LINK_FILE.exists():
                 raise InstallError("Ссылка ещё не создана")
