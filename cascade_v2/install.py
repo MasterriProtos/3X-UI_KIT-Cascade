@@ -39,6 +39,7 @@ XRAY = Path("/usr/local/bin/xray")
 XRAY_UNIT = Path("/etc/systemd/system/xray.service")
 # Fixed upstream installer revision reviewed for this project.
 INSTALL_SCRIPT_COMMIT = "1bce9c3a9630d72521643159080017d1c001bc71"
+XRAY_VERSION = "v26.11.9"  # tested with KIT-pinned ENTRY core v26.6.27
 INSTALL_SCRIPT_URL = (
     "https://raw.githubusercontent.com/XTLS/Xray-install/"
     + INSTALL_SCRIPT_COMMIT + "/install-release.sh"
@@ -178,7 +179,8 @@ def install_core():
         script.write_bytes(data)
         script.chmod(0o700)
         # The official installer also downloads and verifies Xray releases.
-        run(["bash", script, "install", "--manually-restart-later"],
+        run(["bash", script, "install", "--version", XRAY_VERSION,
+             "--manually-restart-later"],
             timeout=1500, capture=False)
     if not XRAY.is_file() or not XRAY_UNIT.is_file():
         raise InstallError("Официальный установщик не создал ожидаемые Xray/systemd файлы")
