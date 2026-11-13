@@ -36,7 +36,7 @@ class ChainTests(unittest.TestCase):
     def test_invalid_protocol_rejected(self):
         with self.assertRaises(hops.ChainError):hops.parse_link(self.url.replace("type=tcp","type=ws"))
     def test_duplicate_parameter_rejected(self):
-        with self.assertRaises(hops.ChainError):hops.parse_link(self.url+"&sni=evil.org")
+        with self.assertRaises(hops.ChainError):hops.parse_link(self.url.replace("#", "&sni=evil.org#"))
     def test_missing_key_rejected(self):
         with self.assertRaises(hops.ChainError):hops.parse_link(self.url.replace("pbk="+KEY,"pbk=bad"))
 
