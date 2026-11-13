@@ -38,6 +38,9 @@ MANAGED_CORE = STATE_DIR / "managed-core.txt"
 CONFIG_FILE = Path("/usr/local/etc/xray/config.json")
 XRAY = Path("/usr/local/bin/xray")
 XRAY_UNIT = Path("/etc/systemd/system/xray.service")
+PANEL_BINARY = Path("/usr/local/x-ui/x-ui")
+PANEL_RESULT = Path("/root/3x-ui.txt")
+KIT_BINARY = Path("/usr/local/bin/kit")
 # Fixed upstream installer revision reviewed for this project.
 INSTALL_SCRIPT_COMMIT = "1bce9c3a9630d72521643159080017d1c001bc71"
 XRAY_VERSION = "v26.11.9"  # tested with KIT-pinned ENTRY core v26.6.27
@@ -632,14 +635,12 @@ def inspect_entry_resume():
             "Обнаружены другие роли/состояния Xray. "
             "Автоматическое продолжение запрещено."
         )
-    if (Path("/root/3x-ui.txt").exists() or
-            Path("/usr/local/bin/kit").exists()):
+    if (PANEL_RESULT.exists() or KIT_BINARY.exists()):
         raise InstallError(
             "KIT уже завершил установку либо изменён вручную. "
             "Автоматическое продолжение запрещено."
         )
-    panel_binary = Path("/usr/local/x-ui/x-ui")
-    if not panel_binary.is_file() or not entry.ENV_FILE.is_file():
+    if not PANEL_BINARY.is_file() or not entry.ENV_FILE.is_file():
         raise InstallError(
             "Панель 3X-UI ещё не установлена. "
             "Используйте install --role entry для чистого сервера."
