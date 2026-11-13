@@ -13,6 +13,9 @@ import json
 import os
 from pathlib import Path
 import re
+import sqlite3
+import shutil
+import subprocess
 import shlex
 import socket
 import ssl
@@ -293,6 +296,9 @@ def status():
     state = json.loads(STATE_FILE.read_text(encoding="utf-8"))
     print("ENTRY:", state["status"], "→ EXIT", state["next"])
     panel = Panel()
+    if state["status"] == "restored-disabled":
+        print("x-ui намеренно остановлена после отката, доступ клиентов закрыт.")
+        return
     cfg = panel.get_template()
     print("Маршрут Xray:", cfg["outbounds"][0].get("tag"))
     if cfg["outbounds"][0].get("tag") != OUTBOUND_TAG:
@@ -301,24 +307,46 @@ def status():
 
 
 def restore():
-    """Explicit fail-closed recovery: stop panel first so direct egress cannot leak."""
+    """Fail-closed: stop and disable panel, then update its *offline* SQLite DB.
+
+    Never call an API on a stopped service. The restored template must not be
+    used until the administrator explicitly decides how to handle client inbounds.
+    """
     if not BACKUP.is_file():
         raise EntryError("Нет сохранённого Xray template для отката")
-    if input("Остановить x-ui и восстановить старые маршруты? Введите ОТКАТ: ").strip() != "ОТКАТ":
+    database = Path("/etc/x-ui/x-ui.db")
+    if not database.is_file():
+        raise EntryError("Не найдена стандартная SQLite база x-ui.db; откат запрещён")
+    if input("Остановить x-ui, отключить автозапуск и вернуть старые маршруты? Введите ОТКАТ: ").strip() != "ОТКАТ":
         print("Отменено.")
         return
-    import subprocess
     subprocess.run(["systemctl", "stop", "x-ui"], check=True)
-    try:
-        panel = Panel()
-        panel.put_template(json.loads(BACKUP.read_text(encoding="utf-8")))
-    except Exception as exc:
-        raise EntryError(
-            "x-ui остановлена; API недоступен, нужен ручной ремонт через копию "
-            f"{BACKUP}: {exc}"
-        ) from exc
-    print("Восстановлен прежний Xray template. x-ui остаётся ОСТАНОВЛЕНА,")
-    print("чтобы клиентские подключения не получили прямой интернет.")
+    subprocess.run(["systemctl", "disable", "x-ui"], check=True)
+    old = json.loads(BACKUP.read_text(encoding="utf-8"))
+    backup_db = STATE_DIR / "x-ui-before-restore.db"
+    # SQLite online backup API copies a consistent database snapshot, even if
+    # the source is WAL-mode. No raw copying of live DB/WAL sidecars.
+    with sqlite3.connect(str(database)) as src, sqlite3.connect(str(backup_db)) as dst:
+        src.backup(dst)
+    os.chmod(backup_db, 0o600)
+    with sqlite3.connect(str(database)) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            'SELECT value FROM settings WHERE key = ?', ("xrayTemplateConfig",)
+        ).fetchone()
+        if row is None:
+            conn.rollback()
+            raise EntryError("В SQLite нет сохранённого xrayTemplateConfig; x-ui остановлена")
+        conn.execute(
+            'UPDATE settings SET value = ? WHERE key = ?',
+            (hops.format_plan(old), "xrayTemplateConfig"),
+        )
+        conn.commit()
+    state = {"schema": 1, "role": "entry", "status": "restored-disabled"}
+    secure_write(STATE_FILE, hops.format_plan(state))
+    print("Исходный Xray template восстановлен офлайн.")
+    print("x-ui остаётся ОСТАНОВЛЕННОЙ и отключена из автозапуска.")
+    print("Снимок БД до отката:", backup_db)
 
 
 def main(argv=None):
