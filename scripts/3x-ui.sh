@@ -779,29 +779,40 @@ main() {
   # masking protocol. Primary REALITY/REALITY-2 use SNI; XHTTP uses SNI2;
   # Telegram FakeTLS uses SNI3. TLS WS/Trojan use the local certificate.
   if [[ -n ${KIT_CASCADE_NEXT_LINK_FILE:-} && $yes == no && -t 1 ]]; then
-    local mask_choice mask_value
+    local mask_choice mask_value mask_default
     for mask_choice in xhttp mtproto; do
       [[ " ${PROTOS[*]} " == *" $mask_choice "* ]] || continue
-      if [[ $mask_choice == xhttp ]]; then
-        ask_tty "SNI для XHTTP [${SNI2}] (Enter — оставить): " \
-          || die "Нет терминала для выбора маскировки XHTTP"
-      else
-        ask_tty "FakeTLS-сайт MTProto [${SNI3}] (Enter — оставить): " \
-          || die "Нет терминала для выбора маскировки MTProto"
-      fi
-      mask_value=${REPLY,,}; mask_value=${mask_value%.}
-      [[ -n $mask_value ]] || continue
-      [[ $mask_value =~ $re_host ]] && sni_ok "$mask_value" \
-        || die "Сайт $mask_value не прошёл проверку имени / TLS 1.3 + h2"
-      if [[ $mask_choice == xhttp ]]; then
-        [[ $mask_value != "$SNI" && $mask_value != "$SNI3" ]] \
-          || die "Для XHTTP нужен отдельный SNI, не совпадающий с REALITY/MTProto"
-        SNI2=$mask_value
-      else
-        [[ $mask_value != "$SNI" && $mask_value != "$SNI2" ]] \
-          || die "Для MTProto нужен отдельный SNI, не совпадающий с REALITY/XHTTP"
-        SNI3=$mask_value
-      fi
+      while true; do
+        if [[ $mask_choice == xhttp ]]; then
+          mask_default=$SNI2
+          ask_tty "SNI для XHTTP [${mask_default}] (Enter — оставить): " \
+            || die "Нет терминала для выбора маскировки XHTTP"
+        else
+          mask_default=$SNI3
+          ask_tty "FakeTLS-сайт MTProto [${mask_default}] (Enter — оставить): " \
+            || die "Нет терминала для выбора маскировки MTProto"
+        fi
+        mask_value=${REPLY,,}; mask_value=${mask_value%.}
+        mask_value=${mask_value:-$mask_default}
+        if [[ ! $mask_value =~ $re_host ]] || ! sni_ok "$mask_value"; then
+          warn "Сайт $mask_value не прошёл проверку имени / TLS 1.3 + h2. Выберите другой."
+          continue
+        fi
+        if [[ $mask_choice == xhttp ]]; then
+          if [[ $mask_value == "$SNI" || $mask_value == "$SNI3" ]]; then
+            warn "Сайт $mask_value уже занят REALITY (${SNI}) или MTProto (${SNI3}). Для XHTTP нужен другой SNI."
+            continue
+          fi
+          SNI2=$mask_value
+        else
+          if [[ $mask_value == "$SNI" || $mask_value == "$SNI2" ]]; then
+            warn "Сайт $mask_value уже занят REALITY (${SNI}) или XHTTP (${SNI2}). Для MTProto нужен другой SNI."
+            continue
+          fi
+          SNI3=$mask_value
+        fi
+        break
+      done
     done
   fi
 
