@@ -42,6 +42,27 @@ def original():
 
 
 class EntryTests(unittest.TestCase):
+    def test_panel_get_template_handles_3xui_v390_json_string_obj(self):
+        """Upstream jsonObj(c, string(result)) returns JSON text as obj."""
+        original_cfg = original()
+        for shape in (
+            json.dumps({"xraySetting": original_cfg, "inboundTags": []}),
+            {"xraySetting": json.dumps(original_cfg), "inboundTags": []},
+            {"xraySetting": original_cfg},
+        ):
+            with self.subTest(as_string=isinstance(shape, str)), \
+                 mock.patch.object(entry.Panel, "call", return_value=shape):
+                panel = entry.Panel.__new__(entry.Panel)
+                self.assertEqual(panel.get_template(), original_cfg)
+
+    def test_panel_get_template_rejects_invalid_shapes(self):
+        for value in ('invalid JSON', "{}", {"someOtherField": "[]"},
+                      {"xraySetting": "{}"}, '{"xraySetting":"broken"}'):
+            with self.subTest(value=type(value).__name__), \
+                 mock.patch.object(entry.Panel, "call", return_value=value):
+                with self.assertRaises(entry.EntryError):
+                    entry.Panel.__new__(entry.Panel).get_template()
+
     def test_reality_outbound_legacy_aliases(self):
         val = entry.outbound_to_exit(NODE)
         self.assertEqual(val["streamSettings"]["network"], "tcp")
