@@ -274,15 +274,16 @@ ask_tty() { # приглашение; ответ – в REPLY; не 0, если 
   read -r -p "$1" REPLY </dev/tty || { REPLY=""; return 1; }
 }
 
-ask_yes_no() { # only y/n, Enter = no. Never use for text or numbered menus.
+ask_yes_no() { # explicit confirmations only; menu items still use numbers.
   local answer
   while :; do
     ask_tty "$1 [y/N]: " || return 1
     answer=${REPLY,,}
+    answer=${answer//[[:space:]]/}
     case $answer in
-      y) return 0 ;;
-      n|"") return 1 ;;
-      *) warn "Введите y (да) или n (нет). Enter — нет." ;;
+      y|yes|да|д|у) return 0 ;;  # у: visually identical to Latin y
+      n|no|нет|н|"") return 1 ;;
+      *) warn "Введите y/yes/да (да) или n/no/нет (нет). Enter — нет." ;;
     esac
   done
 }
