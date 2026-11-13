@@ -219,5 +219,36 @@ class EntryTests(unittest.TestCase):
 
 
 
+    def test_early_sni_failure_can_retry_with_saved_link(self):
+        with tempfile.TemporaryDirectory() as d:
+            linkfile = Path(d) / "next-hop.txt"
+            linkfile.write_text(hops.link(NODE))
+            linkfile.chmod(0o600)
+            statefile = Path(d) / "state.json"
+            # Fake clean VPS: only the preserved private VLESS link exists.
+            with mock.patch.object(entry, "PEER_FILE", linkfile), \
+                 mock.patch.object(entry, "STATE_FILE", statefile), \
+                 mock.patch.object(install.Path, "exists",
+                                   lambda p: str(p) == str(linkfile)), \
+                 mock.patch.object(entry, "check_exit_connectivity"), \
+                 mock.patch.object(install, "confirm", side_effect=[True, False]) as confirms, \
+                 mock.patch.object(install.getpass, "getpass") as hidden:
+                install.install_entry()
+                self.assertEqual(confirms.call_count, 2)
+                hidden.assert_not_called()
+                self.assertTrue(linkfile.is_file())
+                self.assertEqual(hops.parse_link(linkfile.read_text())["address"], NODE["address"])
+
+    def test_duplicate_sni_prompts_again_instead_of_exiting(self):
+        script = (Path(__file__).resolve().parents[2] / "scripts" / "3x-ui.sh"
+                  ).read_text(encoding="utf-8")
+        chunk = script[script.index('for mask_choice in xhttp mtproto; do'):
+                       script.index('  step "Пакеты"')]
+        self.assertIn("while true; do", chunk)
+        self.assertIn('warn "Сайт $mask_value уже занят REALITY', chunk)
+        self.assertIn("continue", chunk)
+        self.assertNotIn('|| die "Для XHTTP нужен отдельный SNI', chunk)
+
+
 if __name__ == "__main__":
     unittest.main()
