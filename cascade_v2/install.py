@@ -251,7 +251,9 @@ def rollback_config(backup):
         write_atomic(CONFIG_FILE, backup.read_bytes(), mode=0o640,
                      group=grp.getgrnam("xray").gr_gid)
     elif CONFIG_FILE.exists():
-        CONFIG_FILE.unlink()
+        # Before the first backup is made, the official Xray placeholder ({})
+        # still exists; keep it so a clean retry can be attempted.
+        pass
     for file in (LINK_FILE, STATE_FILE):
         if file.exists():
             file.unlink()
