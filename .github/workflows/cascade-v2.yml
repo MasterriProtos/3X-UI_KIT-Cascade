@@ -42,7 +42,7 @@ jobs:
         run: |
           curl -fsSL --retry 3             https://raw.githubusercontent.com/XTLS/Xray-install/1bce9c3a9630d72521643159080017d1c001bc71/install-release.sh             -o /tmp/install-release.sh
       - name: Install Xray in disposable GitHub runner
-        run: sudo bash /tmp/install-release.sh install --manually-restart-later
+        run: sudo bash /tmp/install-release.sh install --version v26.11.9 --manually-restart-later
       - name: Validate generated real-key configs
         run: |
           python3 - <<'PY'
