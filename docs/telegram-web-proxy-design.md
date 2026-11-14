@@ -1,18 +1,40 @@
 # Telegram WEB Proxy for KIT-Cascade — isolated design (proposal)
 
-Status: **DESIGN ONLY / NOT DEPLOYED**. The existing ENTRY → Xray → EXIT installation is not changed. WEB support must remain opt-in, feature-flagged and absent from user links until tested on the actual Telegram Android client.
+Status: **STAGING HELPER IMPLEMENTED / WEB RELAY NOT DEPLOYED**. The existing ENTRY → Xray → EXIT installation is not changed. Official Telegram Android WEB option has been confirmed by the operator, but end-to-end interoperability is NOT verified. The stage helper only renders an offline candidate; no public WEB route or service is enabled.
 
 ## 0. Compatibility gate — before any server changes
 
 WEB is a distinct Telegram proxy type, **not** Telegram Web in a browser and not a stock MTProto link renamed to WEB. It needs a WEB-aware Telegram client (WebView carrier). The published tproxy-server docs describe the Android implementation as a proof of concept; community reports claim some newer official Android releases support WEB. Neither statement proves support in a given installed build.
 
-On the **official Telegram for Android**, open Settings → Data and Storage → Proxy Settings → Add Proxy and check whether the **WEB** type is present. Record app version and origin (Google Play / official APK). If absent, stop: do not install a WEB relay or generate links. Do not assume the public `t.me/webproxy` link is registered; the direct `tg://webproxy` form may require explicit client support. No account credentials or live secrets are needed for this check.
+On the **official Telegram for Android**, open Settings → Data and Storage → Proxy Settings → Add Proxy and check whether the **WEB** type is present (operator confirmed the option exists). Record app version and origin (Google Play / official APK). If absent, stop: do not install a WEB relay or generate links. Do not assume the public `t.me/webproxy` link is registered; the direct `tg://webproxy` form may require explicit client support. No account credentials or live secrets are needed for this check.
 
 References:
 - https://github.com/telegramdesktop/tproxy-server/blob/master/README.md
 - https://github.com/telegramdesktop/tproxy-server/blob/master/ANDROID.md
 - https://github.com/telegramdesktop/tproxy-server/blob/master/PROTOCOL.md
 - https://git.stelm.me/astelm/telemt/src/branch/master/docs/WEB/WEB_PROXY.en.md
+
+
+## 0a. Implemented offline preflight / staging (no live changes)
+
+The following is already implemented on branch `multi-hop-v2`:
+
+```bash
+cd /root/3X-UI_KIT-Cascade
+git pull --ff-only
+python3 cascade_v2/web_proxy_entry.py preflight --host web.example.org
+python3 cascade_v2/web_proxy_entry.py stage --host web.example.org --output /root/web-candidate-kit-stream.conf
+```
+
+Replace `web.example.org` with a dedicated DNS FQDN owned by the operator. The first command reads `/etc/nginx/kit-stream.conf` and `/etc/kit-cascade/entry/state.json` and reports blockers; the second saves an isolated *candidate* only. It **never edits the installed nginx configuration, adds services, starts Caddy/Telemt, or enables WEB**. Do not copy the candidate into `/etc/nginx` or reload nginx: no local WEB TLS terminator is installed yet. The SNI entry it stages routes only that hostname to a proposed local TLS port 18443. Existing 443 default, REALITY/XHTTP, and 8445 routes remain unchanged. The rollback of this stage is simply deleting the offline candidate file; it changes no live state.
+
+Unit tests: `python3 -m unittest cascade_v2.tests.test_web_proxy_entry -v`.
+
+### Remaining blocker: routing backend egress through EXIT
+
+The official `tproxy-server` relay uses a **stock official MTProxy backend** and does not transparently route that backend's Telegram DC connections through KIT's Xray SOCKS bridge. Its own clean-server installer may replace public :443 management and is **not safe to run directly on an existing KIT ENTRY**. Neither replacing `mtg` with stock MTProxy nor simply pointing the relay at `127.0.0.1:10445` is justified: the latter endpoint expects nginx PROXY protocol and specific FakeTLS settings. A compatible dedicated backend with verifiable SOCKS5 egress (or a tested network-namespace / transparent routing design) must be integrated before activating anything publicly.
+
+Telemt provides an alternate integrated WEB+MTProxy implementation, but its documented direct upstream routing does not on its own establish Xray SOCKS egress. See https://github.com/telemt/telemt/blob/main/docs/WEB/WEB_PROXY.en.md . This must be tested rather than assumed.
 
 ## 1. Desired architecture
 
