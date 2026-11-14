@@ -67,7 +67,9 @@ SNI_CANDIDATES=(dl.google.com www.amazon.com www.samsung.com www.yahoo.com)
 
 ALL_PROTOS=(reality reality2 hy2 xhttp ws trojan vmess ss tuic wg awg awg3 mtproto)
 # Стандартный набор; остальные протоколы (например, wg) отмечаются в «На выбор» или через --protocols.
-DEFAULT_PROTOS=(reality hy2 xhttp ws trojan vmess ss tuic awg awg3 mtproto)
+# MTProto via cascade is experimental (Android mobile handshake is not reliable).
+# Keep it available for explicit selection, never include in the default install.
+DEFAULT_PROTOS=(reality hy2 xhttp ws trojan vmess ss tuic awg awg3)
 declare -A PORTS=([xhttp]=8443 [ws]=2053 [trojan]=2083 [vmess]=2087 [ss]=8388 [tuic]=8444 [wg]=51820 [awg]=51821 [awg3]=51822 [mtproto]=8445)
 PROTOS=(); CREATED=(); OPEN=(); NB_ALL=()
 # Режим «всё TCP на 443»: nginx разводит по SNI и путям, подключения слушают только localhost.
