@@ -47,15 +47,15 @@ PEM = b"-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n"
 FUNCS = "".join(re.search(r"^%s\(\) \{.*?^\}\n" % n, src, re.S | re.M).group(0) for n in ("safe_env", "env_get"))
 ENV_CHECK = src[src.index('  safe_env "$tmp/kit-backup.env"'):src.index('  python3 -c "import sqlite3')]
 ENVS = {
-    "kit-backup.env": b"BACKUP_KIT_VERSION=1.2\nBACKUP_HOST=1.2.3.4\nBACKUP_SSL=ip\nBACKUP_DATE=2026-10-06\n",
+    "kit-backup.env": b"BACKUP_KIT_VERSION=1.2\nBACKUP_HOST=192.0.2.4\nBACKUP_SSL=ip\nBACKUP_DATE=2026-10-06\n",
     "etc/x-ui/install-result.env": b"XUI_USERNAME=abcDEF1234\nXUI_PASSWORD=Pass1234567890abcdef\nXUI_PANEL_PORT=31234\n"
-                                   b"XUI_WEB_BASE_PATH=AbCdEf123456789012\nXUI_ACCESS_URL=https://1.2.3.4:31234/AbCdEf123456789012\n"
+                                   b"XUI_WEB_BASE_PATH=AbCdEf123456789012\nXUI_ACCESS_URL=https://192.0.2.4:31234/AbCdEf123456789012\n"
                                    b"XUI_API_TOKEN=tok_ABCdef0123456789\nXUI_DB_TYPE=sqlite\n",
-    "etc/kit/kit.env": b"HOST=1.2.3.4\nLINK_HOST=1.2.3.4\nPANEL_ON=ip\nSUB_BASE=https://1.2.3.4/AbC123/\nSUB_PATH=/AbC123/\n"
+    "etc/kit/kit.env": b"HOST=192.0.2.4\nLINK_HOST=192.0.2.4\nPANEL_ON=ip\nSUB_BASE=https://192.0.2.4/AbC123/\nSUB_PATH=/AbC123/\n"
                        b"SUB_INTERNAL=10446\nSINGLE=yes\nMTPROTO_INNER=10445\n",
 }
 # kit.env 1.1.x: без LINK_HOST и PANEL_ON, подписка на своём порту.
-KIT_11 = b"HOST=1.2.3.4\nSUB_BASE=https://1.2.3.4:2096/AbC123/\nSUB_PATH=/AbC123/\nSUB_INTERNAL=2096\nSINGLE=no\nMTPROTO_INNER=''\n"
+KIT_11 = b"HOST=192.0.2.4\nSUB_BASE=https://192.0.2.4:2096/AbC123/\nSUB_PATH=/AbC123/\nSUB_INTERNAL=2096\nSINGLE=no\nMTPROTO_INNER=''\n"
 
 
 def restore_env(over=None):
@@ -107,7 +107,7 @@ class RestoreEnv(unittest.TestCase):
 
     def test_good_11(self):
         r = restore_env({"etc/kit/kit.env": KIT_11,
-                         "kit-backup.env": b"BACKUP_KIT_VERSION=1.1.2\nBACKUP_HOST=1.2.3.4\nBACKUP_SSL=ip\nBACKUP_DATE=2026-09-01\n"})
+                         "kit-backup.env": b"BACKUP_KIT_VERSION=1.1.2\nBACKUP_HOST=192.0.2.4\nBACKUP_SSL=ip\nBACKUP_DATE=2026-09-01\n"})
         self.assertIn("ENV-OK", r.stdout, r.stdout + r.stderr)
 
     def bad(self, over):
@@ -129,7 +129,7 @@ class RestoreEnv(unittest.TestCase):
             first = body.index(b"\n") + 1
             for bad in (b"\0", b"\r", b"\x1b", b"\x80", b"\xff", b"\t", b"\x7f"):
                 for variant in (bad + body, body[:first] + bad + b"\n" + body[first:],
-                                body.replace(b"1.2.3.4", b"1.2" + bad + b".3.4", 1), body + b"PATH=/tmp/x" + bad + b"\n",
+                                body.replace(b"192.0.2.4", b"1.2" + bad + b".3.4", 1), body + b"PATH=/tmp/x" + bad + b"\n",
                                 body + b"PATH=/tmp/x\n" + bad, body + bad + b"\n"):
                     r = check(archive([(k, v) for k, v in dict(ENVS, **{name: variant}).items()]))
                     self.assertNotEqual(r.returncode, 0, "%s %r" % (name, variant))
@@ -148,7 +148,7 @@ class RestoreEnv(unittest.TestCase):
             self.assertIn("байты " + name, check(p).stderr)
 
     def test_3xui_txt(self):
-        good = "3X-UI KIT – данные для входа\n\nПанель:  https://1.2.3.4/x/\n\tvless://a@1.2.3.4:443?x=1#Мой 🙂\n".encode()
+        good = "3X-UI KIT – данные для входа\n\nПанель:  https://192.0.2.4/x/\n\tvless://a@192.0.2.4:443?x=1#Мой 🙂\n".encode()
         r = check(archive([(k, v) for k, v in ENVS.items()] + [("root/3x-ui.txt", good)]))
         self.assertEqual(r.returncode, 0, r.stderr)
         for bad in (b"\0", b"\x1b]0;x\x07", b"\x1b[2J", b"\r", b"\xff", b"\xc2\x9b", b"\x7f"):

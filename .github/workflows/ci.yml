@@ -13,7 +13,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: ShellCheck
-        run: shellcheck -S warning -e SC1090,SC2034,SC2211 scripts/*.sh tools/release.sh
+        run: shellcheck -S warning -e SC1090,SC2034,SC2211 scripts/*.sh tools/release.sh bootstrap.sh
+      - name: Проверка bootstrap и секретов
+        run: |
+          bash -n bootstrap.sh
+          bash bootstrap.sh --help >/dev/null
+          python3 scripts/audit_repo.py
       - name: Python
         run: python3 -m py_compile scripts/kit-sub.py
       - name: Генераторы

@@ -8,12 +8,22 @@ on:
       - 'scripts/3x-ui.sh'
       - 'scripts/kit.sh'
       - '.github/workflows/cascade-v2.yml'
+      - 'bootstrap.sh'
+      - 'scripts/audit_repo.py'
+      - 'README.md'
+      - '.gitignore'
+      - 'SECURITY.md'
   pull_request:
     paths:
       - 'cascade_v2/**'
       - 'scripts/3x-ui.sh'
       - 'scripts/kit.sh'
       - '.github/workflows/cascade-v2.yml'
+      - 'bootstrap.sh'
+      - 'scripts/audit_repo.py'
+      - 'README.md'
+      - '.gitignore'
+      - 'SECURITY.md'
   workflow_dispatch:
 
 permissions:
@@ -26,7 +36,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Syntax check original KIT and new hook
-        run: bash -n scripts/3x-ui.sh && bash -n scripts/kit.sh
+        run: bash -n bootstrap.sh && bash -n scripts/3x-ui.sh && bash -n scripts/kit.sh && bash bootstrap.sh --help >/dev/null
+      - name: Scan tracked files for credentials
+        run: python3 scripts/audit_repo.py
       - name: Compile Python
         run: python3 -m compileall -q cascade_v2
       - name: Unit tests

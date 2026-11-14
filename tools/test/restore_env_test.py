@@ -12,20 +12,20 @@ KIT = ("HOST", "LINK_HOST", "PANEL_ON", "SUB_BASE", "SUB_PATH", "SUB_INTERNAL", 
 
 # Как пишут kit backup, установщик 3X-UI и install_kit_cli (printf %q).
 GOOD = {
-    "kit-backup.env": "BACKUP_KIT_VERSION=1.2\nBACKUP_HOST=1.2.3.4\nBACKUP_SSL=ip\nBACKUP_DATE=2026-10-06\n",
+    "kit-backup.env": "BACKUP_KIT_VERSION=1.2\nBACKUP_HOST=192.0.2.4\nBACKUP_SSL=ip\nBACKUP_DATE=2026-10-06\n",
     "install-result.env": "XUI_USERNAME=abcDEF1234\nXUI_PASSWORD=Pass1234567890abcdef\nXUI_PANEL_PORT=31234\n"
-                          "XUI_WEB_BASE_PATH=AbCdEf123456789012\nXUI_ACCESS_URL=https://1.2.3.4:31234/AbCdEf123456789012\n"
+                          "XUI_WEB_BASE_PATH=AbCdEf123456789012\nXUI_ACCESS_URL=https://192.0.2.4:31234/AbCdEf123456789012\n"
                           "XUI_API_TOKEN=tok_ABCdef0123456789\nXUI_DB_TYPE=sqlite\n",
-    "kit.env": "HOST=1.2.3.4\nLINK_HOST=1.2.3.4\nPANEL_ON=ip\nSUB_BASE=https://1.2.3.4/AbC123/\nSUB_PATH=/AbC123/\n"
+    "kit.env": "HOST=192.0.2.4\nLINK_HOST=192.0.2.4\nPANEL_ON=ip\nSUB_BASE=https://192.0.2.4/AbC123/\nSUB_PATH=/AbC123/\n"
                "SUB_INTERNAL=2096\nSINGLE=yes\nMTPROTO_INNER=''\n",
 }
 NAMES = {"kit-backup.env": BACKUP, "install-result.env": XUI, "kit.env": KIT}
 # Другие настоящие варианты: kit.env 1.1.x (без LINK_HOST и PANEL_ON, свой порт подписки), «всё на 443» с доменом,
 # install-result.env с путём панели в слешах (панель стояла до установщика) и пустыми значениями.
 GOOD_MORE = [
-    ("kit.env", "HOST=1.2.3.4\nSUB_BASE=https://1.2.3.4:2096/AbC123/\nSUB_PATH=/AbC123/\nSUB_INTERNAL=2096\nSINGLE=no\nMTPROTO_INNER=''\n"),
-    ("kit.env", "HOST=1.2.3.4\nSUB_BASE=http://127.0.0.1:2096/AbC123/\nSUB_PATH=/AbC123/\nSUB_INTERNAL=2096\nSINGLE=no\nMTPROTO_INNER=''\n"),
-    ("kit.env", "HOST=1.2.3.4\nSUB_BASE=https://1.2.3.4/Ab-C_123/\nSUB_PATH=/Ab-C_123/\nSUB_INTERNAL=10446\nSINGLE=yes\nMTPROTO_INNER=10445\n"),
+    ("kit.env", "HOST=192.0.2.4\nSUB_BASE=https://192.0.2.4:2096/AbC123/\nSUB_PATH=/AbC123/\nSUB_INTERNAL=2096\nSINGLE=no\nMTPROTO_INNER=''\n"),
+    ("kit.env", "HOST=192.0.2.4\nSUB_BASE=http://127.0.0.1:2096/AbC123/\nSUB_PATH=/AbC123/\nSUB_INTERNAL=2096\nSINGLE=no\nMTPROTO_INNER=''\n"),
+    ("kit.env", "HOST=192.0.2.4\nSUB_BASE=https://192.0.2.4/Ab-C_123/\nSUB_PATH=/Ab-C_123/\nSUB_INTERNAL=10446\nSINGLE=yes\nMTPROTO_INNER=10445\n"),
     ("kit.env", "HOST=vpn.example.com\nLINK_HOST=vpn.example.com\nPANEL_ON=domain\nSUB_BASE=https://vpn.example.com/AbC123/\n"
                 "SUB_PATH=/AbC123/\nSUB_INTERNAL=10446\nSINGLE=yes\nMTPROTO_INNER=10445\n"),
     ("install-result.env", "XUI_USERNAME=admin\nXUI_PASSWORD=Pass_1234-abc.def\nXUI_PANEL_PORT=2053\nXUI_WEB_BASE_PATH=/AbCdEf123456789012/\n"
@@ -77,7 +77,7 @@ class SafeEnv(unittest.TestCase):
                              ("kit-backup.env", "BACKUP_KIT_VERSION", "1.2/x"), ("install-result.env", "XUI_WEB_BASE_PATH", "a/b"),
                              ("install-result.env", "XUI_WEB_BASE_PATH", ""), ("install-result.env", "XUI_WEB_BASE_PATH", "a.b"),
                              ("install-result.env", "XUI_DB_TYPE", "mysql"), ("install-result.env", "XUI_PANEL_PORT", "123456"),
-                             ("install-result.env", "XUI_USERNAME", ""), ("install-result.env", "XUI_ACCESS_URL", "ftp://1.2.3.4/x")):
+                             ("install-result.env", "XUI_USERNAME", ""), ("install-result.env", "XUI_ACCESS_URL", "ftp://192.0.2.4/x")):
             lines = [l for l in GOOD[name].splitlines() if not l.startswith(n + "=")] + [n + "=" + bad]
             self.rejected(name, "\n".join(lines) + "\n")
 
@@ -91,7 +91,7 @@ class SafeEnv(unittest.TestCase):
     def test_values(self):
         code, out = run("kit-backup.env", GOOD["kit-backup.env"],
                         'echo "[$(env_get "$1" BACKUP_HOST)|$(env_get "$1" BACKUP_SSL)|$(env_get "$1" NOPE)]"\n')
-        self.assertIn("[1.2.3.4|ip|]", out)
+        self.assertIn("[192.0.2.4|ip|]", out)
         code, out = run("kit.env", GOOD["kit.env"], 'echo "[$(env_get "$1" SUB_PATH)|$(env_get "$1" MTPROTO_INNER)]"\n')
         self.assertIn("[/AbC123/|]", out)
 
@@ -112,11 +112,11 @@ class SafeEnv(unittest.TestCase):
         self.rejected("kit.env", GOOD["kit.env"] + "KIT_VERSION=9.9\n")
 
     def test_foreign_names(self):
-        for bad in ("PATH=/tmp", "IFS=x", "XUI_ENV=/etc/cron.d/x", "HOST=5.6.7.8", "KIT_RAW=https://example.org/"):
+        for bad in ("PATH=/tmp", "IFS=x", "XUI_ENV=/etc/cron.d/x", "HOST=198.51.100.8", "KIT_RAW=https://example.org/"):
             self.rejected("kit-backup.env", GOOD["kit-backup.env"] + bad + "\n")
         for bad in ("PATH=/tmp", "RESULT=/etc/cron.d/x", "XUI_ENV=/tmp/x", "KIT_VERSION=9.9"):
             self.rejected("install-result.env", GOOD["install-result.env"] + bad + "\n")
-        for bad in ("RESULT=/etc/cron.d/x", "XUI_PIN=v0", "BACKUP_HOST=1.2.3.4"):
+        for bad in ("RESULT=/etc/cron.d/x", "XUI_PIN=v0", "BACKUP_HOST=192.0.2.4"):
             self.rejected("kit.env", GOOD["kit.env"] + bad + "\n")
 
     def test_binary_bytes(self):
@@ -129,7 +129,7 @@ class SafeEnv(unittest.TestCase):
                 for variant in (bad + body,                                   # в начале
                                 body[:first] + bad + b"\n" + body[first:],    # отдельной строкой
                                 body[:5] + bad + body[5:],                    # в середине имени или в начале значения
-                                body.replace(b"1.2.3.4", b"1.2" + bad + b".3.4", 1),  # в середине значения
+                                body.replace(b"192.0.2.4", b"1.2" + bad + b".3.4", 1),  # в середине значения
                                 body + b"PATH=/tmp/x" + bad + b"\n",          # в значении лишнего имени
                                 body + b"PATH=/tmp/x\n" + bad,                # в конце, без перевода строки
                                 body + b"PATH=/tmp/x\n" + bad + b"\n"):       # в конце, одиночный

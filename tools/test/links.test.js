@@ -5,7 +5,7 @@ const { parseLink, parseText } = require('../lib/links.js');
 const { buildXray } = require('../lib/xray.js');
 const { buildMihomo } = require('../lib/mihomo.js');
 
-const REALITY = 'vless://5f2c1e7a-0b3d-4c6e-9a8f-1234567890ab@203.0.113.10:443?type=tcp&security=reality&pbk=Fj98Liz-8fJCAaK_hcsGDJRSd9ztkw0TDR2v4kqK7TA&fp=chrome&sni=www.microsoft.com&sid=2831cdcf4a278ac2&spx=%2F&flow=xtls-rprx-vision#%D0%93%D0%B5%D1%80%D0%BC%D0%B0%D0%BD%D0%B8%D1%8F';
+const REALITY = 'vless://5f2c1e7a-0b3d-4c6e-9a8f-1234567890ab@203.0.113.10:443?type=tcp&security=reality&pbk=Fj98Liz-8fJCAaK_hcsGDJRSd9ztkw0TDR2v4kqK7TA&fp=chrome&sni=www.microsoft.com&sid=2831cdcf4a278ac2&spx=%2F&flow=xtls-rprx-vision#%D0%A2%D0%B5%D1%81%D1%82';
 const WS_TLS = 'vless://11111111-2222-3333-4444-555555555555@cdn.example.com:443?type=ws&security=tls&path=%2Fws%3Fed%3D2048&host=cdn.example.com&sni=cdn.example.com&alpn=h2%2Chttp%2F1.1#ws';
 const XHTTP = 'vless://11111111-2222-3333-4444-555555555555@x.example.com:443?type=xhttp&security=reality&pbk=abc&sid=01&sni=www.apple.com&path=%2Fx&mode=packet-up#xhttp';
 const GRPC = 'trojan://p%40ss@t.example.com:443?type=grpc&serviceName=gun&security=tls&sni=t.example.com#grpc';
@@ -18,7 +18,7 @@ const HY2 = 'hy2://admin:9c1e5b@hy.example.com:443/?sni=hy.example.com&insecure=
 test('REALITY', () => {
   const p = parseLink(REALITY);
   assert.equal(p.type, 'vless');
-  assert.equal(p.name, 'Германия');
+  assert.equal(p.name, 'Тест');
   assert.equal(p.tls.security, 'reality');
   assert.equal(p.tls.pbk, 'Fj98Liz-8fJCAaK_hcsGDJRSd9ztkw0TDR2v4kqK7TA');
   assert.equal(p.tls.spx, '/');
@@ -66,7 +66,7 @@ test('подписка в base64 и ошибки по строкам', () => {
 
 test('одинаковые имена становятся уникальными', () => {
   const r = parseText(REALITY + '\n' + REALITY);
-  assert.deepEqual(r.proxies.map((p) => p.name), ['Германия', 'Германия 2']);
+  assert.deepEqual(r.proxies.map((p) => p.name), ['Тест', 'Тест 2']);
 });
 
 test('битые ссылки дают понятную ошибку', () => {
@@ -136,7 +136,7 @@ test('Mihomo: порты XKeen и прокси', () => {
   assert.equal(r.config['routing-mark'], 255);
   assert.equal(r.config.proxies.length, 3);
   assert.equal(r.config.proxies[1].fingerprint, 'abcdef');
-  assert.match(r.yaml, /name: "Германия"/);
+  assert.match(r.yaml, /name: "Тест"/);
 });
 
 test('Команда для роутера: Keenetic (Xray и Mihomo) и OpenWrt (Nikki)', () => {
