@@ -34,9 +34,8 @@ grep -qE "^## v${v//./\\.}([: ]|$)" CHANGELOG.md || die "В CHANGELOG.md нет 
 ok "Версия $v во всех скриптах и в CHANGELOG"
 # Сценарий подписи оригинального KIT проверяет только его legacy manual;
 # корневой README в Cascade относится к другой процедуре установки.
-for f in manuals/3x-ui.md; do
-  grep -q "3X-UI_KIT/v${v}/scripts/3x-ui.sh" "$f" || die "$f: команда установки не закреплена за тегом v$v"
-done
+grep -q "3X-UI_KIT/v${v}/scripts/3x-ui.sh" manuals/3x-ui.md || \
+  die "manuals/3x-ui.md: команда legacy KIT не закреплена за тегом v$v"
 ok "Legacy-команда установки закреплена за тегом v$v"
 
 [[ -z $(git status --porcelain -- "${FILES[@]}" CHANGELOG.md) ]] || die "Есть незакоммиченные изменения в файлах релиза – сначала коммит."
