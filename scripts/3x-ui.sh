@@ -42,6 +42,10 @@ XUI_INSTALL_SHA256="18616fe26c8f6c92db6daa2dcd7cd53c5143ee69ecfd26d8ea6dc9b2c786
 KIT_VERSION="1.2.1"
 # kit и kit-sub берём из того же релиза, что и этот скрипт, а не из меняющейся ветки main.
 KIT_RAW="https://raw.githubusercontent.com/itsnotkubrick/3X-UI_KIT/v$KIT_VERSION"
+# Cascade: KIT CLI and subscription scripts come from this fork.
+if [[ -n ${KIT_CASCADE_NEXT_LINK_FILE:-} ]]; then
+  KIT_RAW="https://raw.githubusercontent.com/MasterriProtos/3X-UI_KIT-Cascade/multi-hop-v2"
+fi
 # Ядро Xray для панели. С 26.7.x клиенты на Mihomo и sing-box (Hiddify, FlClash,
 # Clash Verge, Mihomo в XKeen) не проходят REALITY – проверено 2026-09-25.
 # 26.6.27 – последняя версия, с которой работают все клиенты и которую принимает 3X-UI.
@@ -63,7 +67,9 @@ SNI_CANDIDATES=(dl.google.com www.amazon.com www.samsung.com www.yahoo.com)
 
 ALL_PROTOS=(reality reality2 hy2 xhttp ws trojan vmess ss tuic wg awg awg3 mtproto)
 # Стандартный набор; остальные протоколы (например, wg) отмечаются в «На выбор» или через --protocols.
-DEFAULT_PROTOS=(reality hy2 xhttp ws trojan vmess ss tuic awg awg3 mtproto)
+# MTProto via cascade is experimental (Android mobile handshake is not reliable).
+# Keep it available for explicit selection, never include in the default install.
+DEFAULT_PROTOS=(reality hy2 xhttp ws trojan vmess ss tuic awg awg3)
 declare -A PORTS=([xhttp]=8443 [ws]=2053 [trojan]=2083 [vmess]=2087 [ss]=8388 [tuic]=8444 [wg]=51820 [awg]=51821 [awg3]=51822 [mtproto]=8445)
 PROTOS=(); CREATED=(); OPEN=(); NB_ALL=()
 # Режим «всё TCP на 443»: nginx разводит по SNI и путям, подключения слушают только localhost.
@@ -270,6 +276,20 @@ ask_tty() { # приглашение; ответ – в REPLY; не 0, если 
   read -r -p "$1" REPLY </dev/tty || { REPLY=""; return 1; }
 }
 
+ask_yes_no() { # explicit confirmations only; menu items still use numbers.
+  local answer
+  while :; do
+    ask_tty "$1 [y/N]: " || return 1
+    answer=${REPLY,,}
+    answer=${answer//[[:space:]]/}
+    case $answer in
+      y|yes|да|д|у) return 0 ;;  # у: visually identical to Latin y
+      n|no|нет|н|"") return 1 ;;
+      *) warn "Введите y/yes/да (да) или n/no/нет (нет). Enter — нет." ;;
+    esac
+  done
+}
+
 # Где открывать панель и подписку, если выбран свой домен.
 panel_on_choice() {
   [[ $PANEL_ON == domain ]] && return 0
@@ -434,9 +454,9 @@ ip_cert_self_signed_fallback() {
     echo "   предупреждение, а подписка в приложениях может не открыться."
   } >&2
   if [[ $yes == no && -t 1 ]] && { : </dev/tty; } 2>/dev/null; then
-    ask_tty "Продолжить с самоподписанным сертификатом? [Y/n] " || REPLY=""
-    REPLY=${REPLY//[[:space:]]/}
-    [[ ${REPLY,,} == n* || ${REPLY,,} == н* ]] && return 1
+    if ! ask_yes_no "Использовать самоподписанный сертификат панели? Браузер будет предупреждать о нём"; then
+      return 1
+    fi
   else
     say "Продолжаю с самоподписанным сертификатом (без вопросов)."
   fi
@@ -594,7 +614,7 @@ main() {
   [[ -z $DOMAIN || $multi == no ]] || die "Свой домен работает только в режиме «всё на 443» – уберите --multi-port."
   [[ $PANEL_ON == ip || $PANEL_ON == domain ]] || die "--panel-on: ip или domain"
   [[ $PANEL_ON == ip || -n $DOMAIN || $yes == no ]] || die "--panel-on domain работает только со своим доменом (--domain vpn.example.com)."
-  [[ -z $HOST || $HOST =~ $re_host || $HOST =~ ^(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])(\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])){3}$ ]] || die "--host: нужен IP (например 1.2.3.4) или домен"
+  [[ -z $HOST || $HOST =~ $re_host || $HOST =~ ^(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])(\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])){3}$ ]] || die "--host: нужен IP (например 203.0.113.4) или домен"
   [[ $NAME =~ ^[A-Za-z0-9_.-]{1,32}$ && $NAME =~ [^.] ]] || die "Имя: латиница, цифры, _ . - (до 32 символов, не только точки)."
   [[ $PANEL_SSL =~ ^(auto|ip|none)$ ]] || die "--panel-ssl: auto, ip или none"
   if [[ -n $ucert || -n $ukey ]]; then
@@ -663,7 +683,7 @@ main() {
 
   local host_given=${HOST:+yes}
   HOST=${HOST:-$(public_ip)}
-  [[ -n $HOST ]] || die "Не удалось узнать внешний IP. Укажите его: --host 1.2.3.4"
+  [[ -n $HOST ]] || die "Не удалось узнать внешний IP. Укажите его: --host 203.0.113.4"
   local os_name mem_gb
   os_name=$(. /etc/os-release 2>/dev/null; echo "${PRETTY_NAME:-Linux}")
   mem_gb=$(awk '/MemTotal/ {printf "%.1f", $2 / 1048576}' /proc/meminfo 2>/dev/null || echo "?")
@@ -672,7 +692,7 @@ main() {
   [[ -f $XUI_ENV && ! -f $RESULT ]] && echo "${D}Нашёл следы прерванной установки: продолжу с ними. Ответы на вопросы ниже нужны заново, прошлые выборы не сохраняются.${N}"
   # IP определился снаружи, а ссылки получат именно его: у части хостеров это не адрес самого сервера.
   if [[ -z $host_given && $yes == no && -t 1 ]] && { : </dev/tty; } 2>/dev/null; then
-    ask_tty "Адрес в ссылках: $HOST. Верно? Enter – да, или введите другой IPv4: " || true
+    ask_tty "Публичный IPv4 для клиентских ссылок [$HOST] (Enter — оставить, иначе введите другой IPv4): " || true
     REPLY=${REPLY//[[:space:]]/}
     if [[ -n $REPLY ]]; then
       [[ $REPLY =~ ^(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])(\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])){3}$ ]] || die "Нужен IPv4-адрес, например 203.0.113.10 (или запустите с --host)."
@@ -695,6 +715,20 @@ main() {
   elif [[ -z $SNI && $yes == no && $PANEL_SSL == ip && $multi == no && -t 1 ]] && { : </dev/tty; } 2>/dev/null; then
     choose_masking
   fi
+  # Even without a public TLS cert for the panel, allow explicit REALITY SNI.
+  # Otherwise the upstream KIT automatically chooses a target silently.
+  if [[ -n ${KIT_CASCADE_NEXT_LINK_FILE:-} && -z $SNI && -z $DOMAIN &&
+        $PANEL_SSL != ip && $yes == no && -t 1 ]]; then
+    ask_tty "Сайт маскировки REALITY (Enter — подобрать автоматически): " \
+      || die "Нет терминала для выбора маскировки REALITY"
+    local cascade_custom_sni=${REPLY,,}
+    cascade_custom_sni=${cascade_custom_sni%.}
+    if [[ -n $cascade_custom_sni ]]; then
+      [[ $cascade_custom_sni =~ $re_host ]] && sni_ok "$cascade_custom_sni" \
+        || die "$cascade_custom_sni не прошёл проверку TLS 1.3/h2"
+      SNI=$cascade_custom_sni
+    fi
+  fi
   if [[ -n $DOMAIN ]]; then
     SNI=$DOMAIN
   elif [[ -z $SNI ]]; then
@@ -712,8 +746,8 @@ main() {
       warn "В подсети подходящего сайта не нашёл."
       echo "   Лучший выход – свой домен: запустите снова с --domain vpn.example.com"
       if [[ $yes == no && -t 1 ]] && { : </dev/tty; } 2>/dev/null; then
-        ask_tty "   Продолжить с запасным сайтом из списка? [y/N] " || true
-        [[ $REPLY =~ ^[yYдД]$ ]] || die "Остановился по вашей просьбе. Ставить можно снова в любой момент."
+        ask_yes_no "Взять запасной сайт маскировки из списка?" \
+          || die "Вы отказались от запасного сайта. Установка отменена без создания клиентских подключений."
       else
         later "Сайт для маскировки взят из общего списка (в подсети сервера подходящего не нашлось). Надёжнее свой домен или kit → Протоколы, порты и маскировка → Сменить сайт маскировки."
       fi
@@ -756,6 +790,47 @@ main() {
     [[ -z $SNI3 && -n $SNI2 ]] && { SNI3=$s; break; }
   done
   SNI2=${SNI2:-$SNI}; SNI3=${SNI3:-www.cloudflare.com}
+
+  # Cascade ENTRY: optional independent target choice for each applicable
+  # masking protocol. Primary REALITY/REALITY-2 use SNI; XHTTP uses SNI2;
+  # Telegram FakeTLS uses SNI3. TLS WS/Trojan use the local certificate.
+  if [[ -n ${KIT_CASCADE_NEXT_LINK_FILE:-} && $yes == no && -t 1 ]]; then
+    local mask_choice mask_value mask_default
+    for mask_choice in xhttp mtproto; do
+      [[ " ${PROTOS[*]} " == *" $mask_choice "* ]] || continue
+      while true; do
+        if [[ $mask_choice == xhttp ]]; then
+          mask_default=$SNI2
+          ask_tty "SNI для XHTTP [${mask_default}] (Enter — оставить): " \
+            || die "Нет терминала для выбора маскировки XHTTP"
+        else
+          mask_default=$SNI3
+          ask_tty "FakeTLS-сайт MTProto [${mask_default}] (Enter — оставить): " \
+            || die "Нет терминала для выбора маскировки MTProto"
+        fi
+        mask_value=${REPLY,,}; mask_value=${mask_value%.}
+        mask_value=${mask_value:-$mask_default}
+        if [[ ! $mask_value =~ $re_host ]] || ! sni_ok "$mask_value"; then
+          warn "Сайт $mask_value не прошёл проверку имени / TLS 1.3 + h2. Выберите другой."
+          continue
+        fi
+        if [[ $mask_choice == xhttp ]]; then
+          if [[ $mask_value == "$SNI" || $mask_value == "$SNI3" ]]; then
+            warn "Сайт $mask_value уже занят REALITY (${SNI}) или MTProto (${SNI3}). Для XHTTP нужен другой SNI."
+            continue
+          fi
+          SNI2=$mask_value
+        else
+          if [[ $mask_value == "$SNI" || $mask_value == "$SNI2" ]]; then
+            warn "Сайт $mask_value уже занят REALITY (${SNI}) или XHTTP (${SNI2}). Для MTProto нужен другой SNI."
+            continue
+          fi
+          SNI3=$mask_value
+        fi
+        break
+      done
+    done
+  fi
 
   step "Пакеты"
   export DEBIAN_FRONTEND=noninteractive
@@ -833,6 +908,16 @@ main() {
   say "${D}На новых версиях клиенты на sing-box (Karing, Hiddify) перестают подключаться${N}"
   say "${D}по REALITY и ещё нескольким протоколам. Перейдём на новое, когда это исправят.${N}"
 
+  # Configure tested next-hop route BEFORE creating any client protocol.
+  if [[ -n ${KIT_CASCADE_NEXT_LINK_FILE:-} ]]; then
+    local cascade_path
+    cascade_path="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)/cascade_v2/entry.py"
+    [[ -f $cascade_path ]] || die "Нет cascade_v2/entry.py – нужен полный checkout multi-hop-v2"
+    python3 "$cascade_path" apply --link-file "$KIT_CASCADE_NEXT_LINK_FILE" \
+      || die "CASCADE: VLESS outbound/маршрут не применён; клиентские протоколы НЕ созданы."
+    ok "Маршрутизация через EXIT включена до создания клиентских подключений"
+  fi
+
   # --- подключения: все выбранные протоколы, один subId на пользователя ---
   step "Подключения"
   EXISTING=$(api GET inbounds/list)
@@ -898,8 +983,12 @@ main() {
     /usr/local/bin/kit net panel domain >/dev/null 2>&1 || { PANEL_ON=ip; later "Панель и подписку по домену включить не удалось: оставил по IP. Попробуйте позже: kit net panel domain"; }
   fi
   brand_xui_menu
-  # Автообновление kit и kit-sub: только подписанные релизы, выключается kit update --manual.
-  /usr/local/bin/kit update --auto >/dev/null 2>&1 || later "Автообновление не включилось – включите позже: kit update --auto"
+  # Upstream auto-updates would overwrite Cascade protections.
+  if [[ -z ${KIT_CASCADE_NEXT_LINK_FILE:-} ]]; then
+    /usr/local/bin/kit update --auto >/dev/null 2>&1 || later "Автообновление не включилось – включите позже: kit update --auto"
+  else
+    later "Cascade alpha: автообновления KIT выключены, чтобы не заменить маршруты кодом upstream."
+  fi
   # Общий лимит трафика: у пользователя несколько записей (AmneziaWG считается отдельно), раз в 5 минут их трафик складывается.
   /usr/local/bin/kit __limit-timer on >/dev/null 2>&1 || later "Проверка общего лимита трафика не включилась – включите позже: kit fix"
   /usr/local/bin/kit net dns on >/dev/null 2>&1 || later "DNS в подписке не настроился – включите позже: kit net dns on"
@@ -943,8 +1032,12 @@ main() {
   extra=$(sub_links "$SUBID-awg" 1; sub_links "$SUBID-tg" 1)
   [[ -n $extra ]] && links+=$'\n'"$extra"
   AWG_LINKS=$(grep '^vpn://' <<<"$links" || true)
-  # MTProto слушает localhost, а клиенты приходят через nginx на 443.
-  [[ $SINGLE == yes ]] && links=$(sed "s/^\(tg:\/\/proxy?\)\(.*\)port=${INNER[mtproto]}/\1\2port=443/" <<<"$links")
+  # Cascade выделяет MTProto TCP/8445; обычный SINGLE сохраняет TCP/443.
+  local mt_link_port=443
+  [[ -n ${KIT_CASCADE_NEXT_LINK_FILE:-} ]] && mt_link_port=${PORTS[mtproto]}
+  if [[ $SINGLE == yes ]]; then
+    links=$(sed -E "/^tg:\/\/proxy\?/s/(^|[?&])port=${INNER[mtproto]}([&#]|$)/\\1port=${mt_link_port}\\2/" <<<"$links")
+  fi
   umask 077
   {
     echo "3X-UI KIT (3X-UI $XUI_VERSION) – данные для входа (файл виден только root)"
@@ -958,7 +1051,7 @@ main() {
     echo "$links"
     if [[ $SINGLE == yes ]] && grep -q '^tg://' <<<"$links"; then
       echo
-      echo "Telegram (tg://): порт 443 – верный, ${INNER[mtproto]} – внутренний порт сервера, снаружи закрыт."
+      echo "Telegram (tg://): порт ${mt_link_port} – публичный, ${INNER[mtproto]} – внутренний порт сервера, снаружи закрыт."
     fi
   } >"$RESULT"
 
@@ -1266,7 +1359,7 @@ proto_xhttp() {
   local keys stream settings
   keys=$(api GET server/getNewX25519Cert)
   settings=$(jq -nc --arg id "$(uuid)" --argjson c "$(client_base xhttp)" '{clients: [$c + {id: $id, flow: ""}], decryption: "none"}')
-  stream=$(jq -nc --arg sni "$SNI" --argjson k "$keys" --arg sid "$(openssl rand -hex 8)" --arg path "/$(rand_str 10 | tr 'A-Z' 'a-z')" '{
+  stream=$(jq -nc --arg sni "$SNI2" --argjson k "$keys" --arg sid "$(openssl rand -hex 8)" --arg path "/$(rand_str 10 | tr 'A-Z' 'a-z')" '{
     network: "xhttp", security: "reality", xhttpSettings: {path: $path, mode: "auto"},
     realitySettings: {target: ($sni + ":443"), serverNames: [$sni], privateKey: $k.privateKey, shortIds: [$sid],
       settings: {publicKey: $k.publicKey, fingerprint: "chrome", spiderX: "/"}}}')
@@ -1402,17 +1495,26 @@ telegram_reachable() {
 
 proto_mtproto() {
   # MTProto бесполезен, если сам сервер не достаёт до Telegram (так бывает у отдельных хостеров).
-  if ! telegram_reachable; then
+  if [[ -z ${KIT_CASCADE_NEXT_LINK_FILE:-} ]] && ! telegram_reachable; then
     later "MTProto пропущен: с этого сервера недоступны серверы Telegram – прокси для Telegram здесь работать не будет."
     return
   fi
-  local settings
+  local settings cascade_mtg='{}'
+  # mtg is separate from Xray; force Telegram through the local
+  # Xray SOCKS bridge injected by 3X-UI v3.9.0.
+  if [[ -n ${KIT_CASCADE_NEXT_LINK_FILE:-} ]]; then
+    # Reserve a random free loopback SOCKS port for this mtg instance.
+    local mtproto_socks_port
+    mtproto_socks_port=$(free_port)
+    cascade_mtg=$(jq -nc --argjson port "$mtproto_socks_port" \
+      '{routeThroughXray:true, routeXrayPort:$port, outboundTag:"to-next-hop"}')
+  fi
   if [[ $SINGLE == yes ]]; then
     # FakeTLS-домен – свой сайт: nginx узнаёт MTProto по нему и передаёт mtg с реальным IP клиента.
-    settings=$(jq -nc --arg d "$SNI3" --argjson c "$(client_base mtproto)" '{fakeTlsDomain: $d, proxyProtocolListener: true, clients: [$c + {secret: ""}]}')
+    settings=$(jq -nc --arg d "$SNI3" --argjson c "$(client_base mtproto)" --argjson casc "$cascade_mtg" '{fakeTlsDomain: $d, proxyProtocolListener: true, clients: [$c + {secret: ""}]} + $casc')
     add_inbound "MTProto" "${INNER[mtproto]}" inner mtproto "$settings" '{}'
   else
-    settings=$(jq -nc --argjson c "$(client_base mtproto)" '{fakeTlsDomain: "www.cloudflare.com", clients: [$c + {secret: ""}]}')
+    settings=$(jq -nc --arg d "$SNI3" --argjson c "$(client_base mtproto)" --argjson casc "$cascade_mtg" '{fakeTlsDomain: $d, clients: [$c + {secret: ""}]} + $casc')
     add_inbound "MTProto" "${PORTS[mtproto]}" tcp mtproto "$settings" '{}'
   fi
 }
@@ -1701,6 +1803,19 @@ setup_nginx() {
     echo "        proxy_connect_timeout 10s;"
     echo "        proxy_timeout 1h;"
     echo "    }"
+    if [[ -n ${KIT_CASCADE_NEXT_LINK_FILE:-} && -n $mt_sni ]]; then
+      # Telegram may omit SNI in FakeTLS. Keep 443 for other protocols and
+      # expose a separate TCP port routed directly to the existing mtg sidecar.
+      echo "    # KIT CASCADE MTProto direct 8445"
+      echo "    server {"
+      echo "        listen ${PORTS[mtproto]};"
+      echo "        listen [::]:${PORTS[mtproto]};"
+      echo "        proxy_pass 127.0.0.1:${INNER[mtproto]};"
+      echo "        proxy_protocol on;"
+      echo "        proxy_connect_timeout 10s;"
+      echo "        proxy_timeout 1h;"
+      echo "    }"
+    fi
     echo "}"
   } >/etc/nginx/kit-stream.conf
   cat >/etc/nginx/conf.d/kit.conf <<NGX
@@ -1774,6 +1889,7 @@ NGX
   # Let's Encrypt на IP продлевается каждые несколько дней – nginx раз в сутки перечитывает сертификат.
   echo '17 4 * * * root systemctl reload nginx >/dev/null 2>&1' >/etc/cron.d/kit-nginx-reload
   OPEN+=("443/tcp")
+  [[ -n ${KIT_CASCADE_NEXT_LINK_FILE:-} && -n $mt_sni ]] && OPEN+=("${PORTS[mtproto]}/tcp")
   local i
   for i in $(seq 1 10); do port_busy 443 tcp && return 0; sleep 1; done
   die "nginx не открыл порт 443."
@@ -1961,7 +2077,7 @@ env_get() { # файл имя
   ( . "$1"; printf '%s' "${!2:-}" )
 }
 
-# Меняет старый IP на новый в базе панели и файлах kit (только целиком, 1.2.3.4 не заденет 11.2.3.45).
+# Меняет старый IP на новый в базе панели и файлах kit (только целиком, 203.0.113.4 не заденет 1203.0.113.45).
 replace_host() { # старый новый файлы...
   python3 - "$@" <<'PY'
 import re, sqlite3, sys
@@ -2178,7 +2294,7 @@ PY
   # Домен переезжает вместе с сервером (поменяйте A-запись), IP – нет.
   if [[ $BACKUP_HOST =~ ^[0-9.]+$ ]]; then
     HOST=${HOST:-$(public_ip)}
-    [[ -n $HOST ]] || die "Не удалось узнать внешний IP. Укажите его: --host 1.2.3.4"
+    [[ -n $HOST ]] || die "Не удалось узнать внешний IP. Укажите его: --host 203.0.113.4"
     [[ $HOST != "$BACKUP_HOST" ]] && old_ip=$BACKUP_HOST
   else
     HOST=$BACKUP_HOST
@@ -2345,7 +2461,7 @@ usage() {
   --cert файл --key файл  свой сертификат (например, для домена) вместо Let's Encrypt на IP;
                       тогда --host – это домен из сертификата
   --user admin        имя первого клиента
-  --host 1.2.3.4      адрес в ссылке, если IP определился неверно
+  --host 203.0.113.4      адрес в ссылке, если IP определился неверно
   --restore файл      поднять сервер из резервной копии kit backup (на чистом VPS)
   --panel-on ip|domain панель и подписка по IP (по умолчанию) или по своему домену (нужен --domain)
   --no-ufw            не трогать файрвол

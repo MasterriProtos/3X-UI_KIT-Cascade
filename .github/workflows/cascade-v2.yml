@@ -1,0 +1,113 @@
+name: Cascade v2 - Python and Xray validation
+
+on:
+  push:
+    branches: [multi-hop-v2]
+    paths:
+      - 'cascade_v2/**'
+      - 'scripts/3x-ui.sh'
+      - 'scripts/kit.sh'
+      - '.github/workflows/cascade-v2.yml'
+      - 'bootstrap.sh'
+      - 'scripts/audit_repo.py'
+      - 'README.md'
+      - '.gitignore'
+      - 'SECURITY.md'
+  pull_request:
+    paths:
+      - 'cascade_v2/**'
+      - 'scripts/3x-ui.sh'
+      - 'scripts/kit.sh'
+      - '.github/workflows/cascade-v2.yml'
+      - 'bootstrap.sh'
+      - 'scripts/audit_repo.py'
+      - 'README.md'
+      - '.gitignore'
+      - 'SECURITY.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline-tests:
+    name: Offline safety and parser tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Syntax check original KIT and new hook
+        run: bash -n bootstrap.sh && bash -n scripts/3x-ui.sh && bash -n scripts/kit.sh && bash bootstrap.sh --help >/dev/null
+      - name: Scan tracked files for credentials
+        run: python3 scripts/audit_repo.py
+      - name: Compile Python
+        run: python3 -m compileall -q cascade_v2
+      - name: Unit tests
+        run: python3 -m unittest discover -s cascade_v2/tests -v
+
+  xray-config-test:
+    name: Validate EXIT and RELAY JSON with Xray-core
+    runs-on: ubuntu-24.04
+    needs: offline-tests
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download pinned official Xray installer
+        run: |
+          curl -fsSL --retry 3             https://raw.githubusercontent.com/XTLS/Xray-install/1bce9c3a9630d72521643159080017d1c001bc71/install-release.sh             -o /tmp/install-release.sh
+      - name: Install Xray in disposable GitHub runner
+        run: sudo bash /tmp/install-release.sh install --version v26.11.9 --manually-restart-later
+      - name: Validate generated real-key configs
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          import re
+          import subprocess
+          import sys
+          import tempfile
+          import uuid
+
+          sys.path.insert(0, "cascade_v2")
+          import hops
+
+          binary = "/usr/local/bin/xray"
+          output = subprocess.check_output([binary, "x25519"], text=True)
+          fields = {}
+          for row in output.splitlines():
+              if ":" in row:
+                  k, v = row.split(":", 1)
+                  fields[k.strip().lower().replace(" ", "")] = v.strip()
+          private = fields["privatekey"]
+          public = next((v for k, v in fields.items()
+                         if k.startswith("password") or k.startswith("publickey")), None)
+          assert private and public, "Unable to parse X25519 output"
+          node = {
+              "address": "2606:4700:4700::1111",
+              "port": 24443,
+              "serverName": "www.microsoft.com",
+              "privateKey": private,
+              "publicKey": public,
+              "shortId": "0123456789abcdef",
+              "id": str(uuid.uuid4()),
+          }
+          uri = hops.link(node)
+          assert hops.parse_link(uri)["address"] == node["address"]
+          with tempfile.TemporaryDirectory() as path:
+              for role in ("exit", "relay"):
+                  cfg = hops.node_config(role, node, uri if role == "relay" else None)
+                  filepath = Path(path) / (role + ".json")
+                  filepath.write_text(hops.format_plan(cfg))
+                  subprocess.run([binary, "run", "-test", "-config", str(filepath)], check=True)
+                  print("Validated", role)
+          PY
+      - name: End-to-end two-hop REALITY transport test
+        run: python3 cascade_v2/tests/live_hops.py
+      - name: Fetch and verify pinned KIT Xray v26.6.27
+        run: |
+          mkdir -p /tmp/kit-xray-legacy
+          curl -fsSL --retry 3 \
+            https://github.com/XTLS/Xray-core/releases/download/v26.6.27/Xray-linux-64.zip \
+            -o /tmp/xray-legacy.zip
+          echo 'b3e5902d06d6282fe53cfa2fc426058b9aeaa429b2c812e20887cd47f26d08bf  /tmp/xray-legacy.zip' | sha256sum -c -
+          unzip -q -o /tmp/xray-legacy.zip -d /tmp/kit-xray-legacy
+      - name: Real mixed-version compatibility test (ENTRY older, Relay and Exit current)
+        run: CASCADE_ENTRY_XRAY=/tmp/kit-xray-legacy/xray python3 cascade_v2/tests/live_hops.py
