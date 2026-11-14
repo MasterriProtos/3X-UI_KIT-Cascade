@@ -1030,8 +1030,12 @@ main() {
   extra=$(sub_links "$SUBID-awg" 1; sub_links "$SUBID-tg" 1)
   [[ -n $extra ]] && links+=$'\n'"$extra"
   AWG_LINKS=$(grep '^vpn://' <<<"$links" || true)
-  # MTProto слушает localhost, а клиенты приходят через nginx на 443.
-  [[ $SINGLE == yes ]] && links=$(sed "s/^\(tg:\/\/proxy?\)\(.*\)port=${INNER[mtproto]}/\1\2port=443/" <<<"$links")
+  # Cascade выделяет MTProto TCP/8445; обычный SINGLE сохраняет TCP/443.
+  local mt_link_port=443
+  [[ -n ${KIT_CASCADE_NEXT_LINK_FILE:-} ]] && mt_link_port=${PORTS[mtproto]}
+  if [[ $SINGLE == yes ]]; then
+    links=$(sed -E "/^tg:\/\/proxy\?/s/(^|[?&])port=${INNER[mtproto]}([&#]|$)/\\1port=${mt_link_port}\\2/" <<<"$links")
+  fi
   umask 077
   {
     echo "3X-UI KIT (3X-UI $XUI_VERSION) – данные для входа (файл виден только root)"
@@ -1045,7 +1049,7 @@ main() {
     echo "$links"
     if [[ $SINGLE == yes ]] && grep -q '^tg://' <<<"$links"; then
       echo
-      echo "Telegram (tg://): порт 443 – верный, ${INNER[mtproto]} – внутренний порт сервера, снаружи закрыт."
+      echo "Telegram (tg://): порт ${mt_link_port} – публичный, ${INNER[mtproto]} – внутренний порт сервера, снаружи закрыт."
     fi
   } >"$RESULT"
 
