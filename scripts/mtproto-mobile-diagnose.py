@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 import re
 import select
@@ -78,38 +79,53 @@ def check_configuration(port: int) -> list[str]:
 
 
 def observe(seconds: int, port: int) -> dict[str, int]:
+    """Stream tcpdump safely, print periodic counters and never store packet content."""
     counters = {"incoming": 0, "outgoing": 0, "syn_in": 0,
                 "synack_out": 0, "incoming_payload": 0, "outgoing_payload": 0}
     command = ["tcpdump", "-i", "any", "-n", "-l", "-tt",
                f"tcp port {port}"]
     process = subprocess.Popen(command, stdout=subprocess.PIPE,
-                               stderr=subprocess.DEVNULL, text=True, bufsize=1)
+                               stderr=subprocess.DEVNULL, bufsize=0)
     deadline = time.monotonic() + seconds
+    next_progress = time.monotonic() + 5
+    pending = bytearray()
+    print("Захват запущен. Прогресс каждые 5 секунд...", flush=True)
     try:
         assert process.stdout is not None
         while time.monotonic() < deadline:
             timeout = min(0.25, max(0.0, deadline - time.monotonic()))
             readable, _, _ = select.select([process.stdout], [], [], timeout)
-            if not readable:
-                if process.poll() is not None:
-                    raise RuntimeError("tcpdump завершился до окончания наблюдения")
-                continue
-            line = process.stdout.readline()
-            if not line:
-                if process.poll() is not None:
-                    raise RuntimeError("tcpdump не смог захватить пакеты (проверьте права)")
-                continue
-            parsed = parse_packet(line, port)
-            if parsed is None:
-                continue
-            direction, flags, length = parsed
-            counters[direction] += 1
-            if direction == "incoming" and "S" in flags and "." not in flags:
-                counters["syn_in"] += 1
-            if direction == "outgoing" and "S" in flags and "." in flags:
-                counters["synack_out"] += 1
-            if length > 0:
-                counters[f"{direction}_payload"] += 1
+            if readable:
+                chunk = os.read(process.stdout.fileno(), 65536)
+                if not chunk:
+                    if process.poll() is not None:
+                        raise RuntimeError("tcpdump завершился до окончания наблюдения")
+                else:
+                    pending.extend(chunk)
+                    while b"\\n" in pending:
+                        raw, _, remainder = pending.partition(b"\\n")
+                        pending = bytearray(remainder)
+                        parsed = parse_packet(raw.decode("utf-8", errors="replace"), port)
+                        if parsed is None:
+                            continue
+                        direction, flags, length = parsed
+                        counters[direction] += 1
+                        if direction == "incoming" and "S" in flags and "." not in flags:
+                            counters["syn_in"] += 1
+                        if direction == "outgoing" and "S" in flags and "." in flags:
+                            counters["synack_out"] += 1
+                        if length > 0:
+                            counters[f"{direction}_payload"] += 1
+            elif process.poll() is not None:
+                raise RuntimeError("tcpdump не работает; проверьте права и сетевой интерфейс")
+            now = time.monotonic()
+            if now >= next_progress:
+                remaining = max(0, int(deadline - now))
+                print(f"Ещё {remaining} с | SYN: {counters['syn_in']} | "
+                      f"SYN-ACK: {counters['synack_out']} | "
+                      f"пакетов с данными: {counters['incoming_payload']}",
+                      flush=True)
+                next_progress = now + 5
     finally:
         process.terminate()
         try:
@@ -121,7 +137,6 @@ def observe(seconds: int, port: int) -> dict[str, int]:
             process.stdout.close()
     return counters
 
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="MTProto: только мобильная 4G/5G диагностика")
     parser.add_argument("--seconds", type=int, default=45,
@@ -129,7 +144,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if not 10 <= args.seconds <= 180:
         parser.error("--seconds должен быть от 10 до 180")
-    if hasattr(__import__("os"), "geteuid") and __import__("os").geteuid() != 0:
+    if os.geteuid() != 0:
         print("Запустите от root", file=sys.stderr)
         return 2
     if shutil.which("tcpdump") is None:
@@ -142,7 +157,7 @@ def main(argv: list[str] | None = None) -> int:
             print(" -", f)
     print(f"Наблюдаю TCP/{DEFAULT_PORT} {args.seconds} с. Отключите Wi-Fi на телефоне,")
     print("включите мобильные данные и повторите подключение Telegram через MTProto.")
-    print("IP-адреса, MTProto-секреты и содержимое пакетов не выводятся и не сохраняются.")
+    print("IP-адреса, MTProto-секреты и содержимое пакетов не выводятся и не сохраняются.", flush=True)
     try:
         c = observe(args.seconds, DEFAULT_PORT)
     except (OSError, RuntimeError) as exc:
